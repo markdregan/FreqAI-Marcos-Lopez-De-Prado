@@ -1,15 +1,13 @@
 # Freqtrade rules
-config*.json
+user_data/backtest_results/*
+user_data/meta_model/*
+user_data/data/*
+user_data/plot/*
+*.pkl
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
 logfile.txt
-user_data/*
-!user_data/strategy/sample_strategy.py
-!user_data/notebooks
-user_data/notebooks/*
-freqtrade-plot.html
-freqtrade-profit-plot.html
 freqtrade/rpc/api_server/ui/*
 
 # Macos related

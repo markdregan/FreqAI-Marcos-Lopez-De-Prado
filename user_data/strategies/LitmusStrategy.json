@@ -1,0 +1,43 @@
+{
+  "strategy_name": "LitmusStrategy",
+  "params": {
+    "roi": {
+      "0": 0.04,
+      "20": 0.02,
+      "30": 0.01,
+      "40": 0.0
+    },
+    "stoploss": {
+      "stoploss": -0.1
+    },
+    "trailing": {
+      "trailing_stop": false,
+      "trailing_stop_positive": 0.005,
+      "trailing_stop_positive_offset": 0.0051,
+      "trailing_only_offset_is_reached": false
+    },
+    "buy": {
+      "buy_adx_enabled": true,
+      "buy_adx_max": 21.7,
+      "buy_adx_min": 21.3,
+      "buy_rsi_enabled": true,
+      "buy_rsi_max": 40,
+      "buy_rsi_min": 39
+    },
+    "sell": {
+      "sell_adx_enabled": false,
+      "sell_adx_max": 23.2,
+      "sell_adx_min": 34.8,
+      "sell_rsi_enabled": true,
+      "sell_rsi_max": 31,
+      "sell_rsi_min": 40
+    },
+    "protection": {
+      "cooldown_lookback": 20,
+      "stop_duration": 171,
+      "use_stop_protection": true
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2022-03-22 23:32:27.591706+00:00"
+}
