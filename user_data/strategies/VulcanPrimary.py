@@ -236,7 +236,7 @@ class VulcanPrimary(IStrategy):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
-        Disable populate sell
+        Disable populate exit
             ----------
             dataframe: DataFrame populated with indicators
             metadata: Additional information, like the currently traded pair

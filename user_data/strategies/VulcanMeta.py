@@ -115,7 +115,7 @@ class VulcanMeta(VulcanPrimary):
         dataframe.loc[
             (qtpylib.crossed_above(dataframe['buy_trigger'], 0.5))
             # If meta model probability is above threshold
-            & (dataframe['meta_model_proba'] > 0.2)
+            & (dataframe['meta_model_proba'] > 0.5)
             # Volume > 0 for backtesting
             & (dataframe['volume'] > 0),
             ['enter_long', 'enter_tag']] = (1, 'primary_buy_trigger')
@@ -138,6 +138,13 @@ class VulcanMeta(VulcanPrimary):
             ['exit_long', 'exit_tag']] = (1, 'main_sell_trigger')
 
         return dataframe
+
+    def custom_exit(self, pair: str, trade: Trade, current_time,
+                    current_rate: float, current_profit: float,
+                    **kwargs):
+        """Disable / over-ride super class"""
+
+        pass
 
     def adjust_trade_position(self, trade: Trade, current_time,
                               current_rate: float, current_profit: float, min_stake: float,

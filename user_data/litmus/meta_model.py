@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from fracdiff.sklearn import FracdiffStat
 from imblearn.over_sampling import SMOTENC
 from joblib import dump, load
 from mlxtend.feature_selection import SequentialFeatureSelector as SFS
@@ -108,13 +109,15 @@ class MetaModel:
     def feature_transform_pipeline(self, feature_selection=False):
         """Sequence of transformations applied to data before passing to ML model"""
 
-        self.categorical_transformer = OneHotEncoder(handle_unknown="ignore")
+        self.categorical_transformer = OneHotEncoder(handle_unknown='ignore', sparse=False)
 
         self.preprocessor = ColumnTransformer(transformers=[
             ("cat", self.categorical_transformer, self.X_features_cat),
         ], remainder='passthrough')
 
         simple_imputer = SimpleImputer(strategy='constant', fill_value=999)
+
+        self.fracdiff_transformer = FracdiffStat()
 
         model = RandomForestClassifier(n_jobs=-1,
                                        criterion='entropy',
@@ -133,11 +136,13 @@ class MetaModel:
             self.clf = Pipeline(
                 steps=[("preprocessor", self.preprocessor),
                        ("simple_imputer", simple_imputer),
+                       ("fracdiff", self.fracdiff_transformer),
                        ("feature_selection", sfs)])
         else:
             self.clf = Pipeline(
                 steps=[("preprocessor", self.preprocessor),
                        ("simple_imputer", simple_imputer),
+                       ("fracdiff", self.fracdiff_transformer),
                        ("classifier", model)])
 
         return self
@@ -347,15 +352,14 @@ class MetaModel:
             'feature_name')['feature_importance'].median().sort_values(
                 ascending=False).index
         sns.color_palette()
-        g = sns.pointplot(x="feature_importance",
+        plt.figure(figsize=(7, plot_height / 2.0))
+        _ = sns.pointplot(x="feature_importance",
                           y="feature_name",
                           hue="source",
                           data=temp_df,
                           order=feature_rank,
                           join=False,
                           ci=None)
-        g.fig.set_figwidth(7)
-        g.fig.set_figheight(plot_height)
 
         return self
 
@@ -415,11 +419,15 @@ class MetaModel:
 
         return temp_df
 
-    def run_train_on_all_data(self):
+    def run_train_on_more_data(self, date_from):
         """Method to train a model on the complete dataset"""
 
-        self.X_train = self.data[self.X_features + [self.sample_weight_col]]
-        self.y_train = self.data[self.y_true_col]
+        idx = pd.IndexSlice
+
+        self.X_train = self.data.loc[
+            idx[:, :, date_from:]][self.X_features + [self.sample_weight_col]]
+        self.y_train = self.data.loc[
+            idx[:, :, date_from:]][self.y_true_col]
 
         self.fix_class_imbalance()
         self.train_model()
