@@ -99,6 +99,8 @@ def test_remove_credentials(default_conf, caplog) -> None:
 def test_init_ccxt_kwargs(default_conf, mocker, caplog):
     mocker.patch('freqtrade.exchange.Exchange._load_markets', MagicMock(return_value={}))
     mocker.patch('freqtrade.exchange.Exchange.validate_stakecurrency')
+    aei_mock = mocker.patch('freqtrade.exchange.Exchange.additional_exchange_init')
+
     caplog.set_level(logging.INFO)
     conf = copy.deepcopy(default_conf)
     conf['exchange']['ccxt_async_config'] = {'aiohttp_trust_env': True, 'asyncio_loop': True}
@@ -108,6 +110,7 @@ def test_init_ccxt_kwargs(default_conf, mocker, caplog):
         caplog)
     assert ex._api_async.aiohttp_trust_env
     assert not ex._api.aiohttp_trust_env
+    assert aei_mock.call_count == 1
 
     # Reset logging and config
     caplog.clear()
@@ -4165,7 +4168,10 @@ def test__order_contracts_to_amount(
             'cost': 60.0,
             'filled': None,
             'remaining': 30.0,
-            'fee': 0.06,
+            'fee': {
+                'currency': 'USDT',
+                'cost': 0.06,
+            },
             'fees': [{
                 'currency': 'USDT',
                 'cost': 0.06,
@@ -4192,7 +4198,10 @@ def test__order_contracts_to_amount(
             'cost': 80.0,
             'filled': None,
             'remaining': 40.0,
-            'fee': 0.08,
+            'fee': {
+                'currency': 'USDT',
+                'cost': 0.08,
+            },
             'fees': [{
                 'currency': 'USDT',
                 'cost': 0.08,
@@ -4226,12 +4235,18 @@ def test__order_contracts_to_amount(
             'info': {},
         },
     ]
+    order1_bef = orders[0]
+    order2_bef = orders[1]
+    order1 = exchange._order_contracts_to_amount(deepcopy(order1_bef))
+    order2 = exchange._order_contracts_to_amount(deepcopy(order2_bef))
+    assert order1['amount'] == order1_bef['amount'] * contract_size
+    assert order1['cost'] == order1_bef['cost'] * contract_size
 
-    order1 = exchange._order_contracts_to_amount(orders[0])
-    order2 = exchange._order_contracts_to_amount(orders[1])
+    assert order2['amount'] == order2_bef['amount'] * contract_size
+    assert order2['cost'] == order2_bef['cost'] * contract_size
+
+    # Don't fail
     exchange._order_contracts_to_amount(orders[2])
-    assert order1['amount'] == 30.0 * contract_size
-    assert order2['amount'] == 40.0 * contract_size
 
 
 @pytest.mark.parametrize('pair,contract_size,trading_mode', [
@@ -4746,8 +4761,10 @@ def test__get_params(mocker, default_conf, exchange_name):
 
     if exchange_name == 'okx':
         params2['tdMode'] = 'isolated'
+        params2['posSide'] = 'net'
 
     assert exchange._get_params(
+        side="buy",
         ordertype='market',
         reduceOnly=False,
         time_in_force='gtc',
@@ -4755,6 +4772,7 @@ def test__get_params(mocker, default_conf, exchange_name):
     ) == params1
 
     assert exchange._get_params(
+        side="buy",
         ordertype='market',
         reduceOnly=False,
         time_in_force='ioc',
@@ -4762,6 +4780,7 @@ def test__get_params(mocker, default_conf, exchange_name):
     ) == params1
 
     assert exchange._get_params(
+        side="buy",
         ordertype='limit',
         reduceOnly=False,
         time_in_force='gtc',
@@ -4774,6 +4793,7 @@ def test__get_params(mocker, default_conf, exchange_name):
     exchange._params = {'test': True}
 
     assert exchange._get_params(
+        side="buy",
         ordertype='limit',
         reduceOnly=True,
         time_in_force='ioc',

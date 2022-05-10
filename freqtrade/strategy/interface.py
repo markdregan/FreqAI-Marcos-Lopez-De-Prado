@@ -15,10 +15,8 @@ from freqtrade.data.dataprovider import DataProvider
 from freqtrade.enums import (CandleType, ExitCheckTuple, ExitType, SignalDirection, SignalTagType,
                              SignalType, TradingMode)
 from freqtrade.exceptions import OperationalException, StrategyError
-from freqtrade.exchange import timeframe_to_minutes, timeframe_to_seconds
-from freqtrade.exchange.exchange import timeframe_to_next_date
-from freqtrade.persistence import PairLocks, Trade
-from freqtrade.persistence.models import LocalTrade, Order
+from freqtrade.exchange import timeframe_to_minutes, timeframe_to_next_date, timeframe_to_seconds
+from freqtrade.persistence import LocalTrade, Order, PairLocks, Trade
 from freqtrade.strategy.hyper import HyperStrategyMixin
 from freqtrade.strategy.informative_decorator import (InformativeData, PopulateIndicators,
                                                       _create_and_merge_informative_pair,
@@ -470,6 +468,34 @@ class IStrategy(ABC, HyperStrategyMixin):
         :return float: Stake amount to adjust your trade
         """
         return None
+
+    def adjust_entry_price(self, trade: Trade, order: Optional[Order], pair: str,
+                           current_time: datetime, proposed_rate: float, current_order_rate: float,
+                           entry_tag: Optional[str], side: str, **kwargs) -> float:
+        """
+        Entry price re-adjustment logic, returning the user desired limit price.
+        This only executes when a order was already placed, still open (unfilled fully or partially)
+        and not timed out on subsequent candles after entry trigger.
+
+        For full documentation please go to https://www.freqtrade.io/en/latest/strategy-callbacks/
+
+        When not implemented by a strategy, returns current_order_rate as default.
+        If current_order_rate is returned then the existing order is maintained.
+        If None is returned then order gets canceled but not replaced by a new one.
+
+        :param pair: Pair that's currently analyzed
+        :param trade: Trade object.
+        :param order: Order object
+        :param current_time: datetime object, containing the current datetime
+        :param proposed_rate: Rate, calculated based on pricing settings in entry_pricing.
+        :param current_order_rate: Rate of the existing order in place.
+        :param entry_tag: Optional entry_tag (buy_tag) if provided with the buy signal.
+        :param side: 'long' or 'short' - indicating the direction of the proposed trade
+        :param **kwargs: Ensure to keep this here so updates to this won't break your strategy.
+        :return float: New entry price value if provided
+
+        """
+        return current_order_rate
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
                  proposed_leverage: float, max_leverage: float, side: str,
