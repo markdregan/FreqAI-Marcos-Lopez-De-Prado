@@ -59,7 +59,6 @@ class VulcanExplore(IStrategy):
     INTERFACE_VERSION = 3
 
     stoploss = -1
-    timeframe = "12h"
     minimal_roi = {"0": 3.0}
 
     # Turn on position adjustment
@@ -156,12 +155,12 @@ class VulcanExplore(IStrategy):
                               current_rate: float, current_profit: float, min_stake: float,
                               max_stake: float, **kwargs):
 
-        filled_buys = trade.select_filled_orders('buy')
-
         try:
-            # This returns first order stake size
-            stake_amount = filled_buys[0].cost
+            # Bet a portion of capital remaining
+            available_stake = self.wallets.get_available_stake_amount()  # type: ignore
+            stake_amount = available_stake / self.config['max_open_trades']
+            print(stake_amount)
             return stake_amount
         except Exception as exception:
             print(exception)
-            pass
+            return None

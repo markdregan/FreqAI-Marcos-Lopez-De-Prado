@@ -9,19 +9,18 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from fracdiff.sklearn import FracdiffStat
+# from fracdiff.sklearn import FracdiffStat
 from imblearn.over_sampling import SMOTENC
 from joblib import dump, load
 from mlxtend.feature_selection import SequentialFeatureSelector as SFS
 from mlxtend.plotting import plot_sequential_feature_selection as plot_sfs
 from pathlib import Path
-from sklearn.compose import ColumnTransformer
+from sklearn import compose, pipeline, preprocessing
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import classification_report, precision_recall_curve, roc_curve
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
 
 
 class MetaModel:
@@ -54,21 +53,21 @@ class MetaModel:
         """Check for NaNs across the features that the ML model will use."""
 
         # Check if features contain any NaNs / Infinity
-        if (self.data[self.cols_to_check].isin([np.nan, np.inf, -np.inf]).any(axis=None)):
-            print('DataFrame contains NaNs which need to be addressed before proceeding \n')
+        if self.data[self.cols_to_check].isin([np.nan, np.inf, -np.inf]).any(axis=None):
+            print('DataFrame contains NaNs which should be addressed before proceeding \n')
             cols_with_issue = self.data[self.cols_to_check].isin(
                 [np.nan, np.inf, -np.inf]).sum()
             cols_with_issue = cols_with_issue[cols_with_issue > 0].sort_values(ascending=False)
             print('List of features with NaNs are: \n')
             print(cols_with_issue)
-            print('\nTo remove these NaN samples, call clean_data()')
+            print('\nTo remove rows with these NaN, call clean_data()')
         else:
             print('No NaNs found in the DataFrame. Ready to train meta model.')
 
         return self
 
     def clean_data(self):
-        """Remove NaN values from the dataset. Only applied to
+        """Remove NaN rows from the dataset. Only applied to
         features that are passed to the MetaModel"""
 
         self.data = self.data.replace([np.inf, -np.inf], np.nan)
@@ -81,16 +80,15 @@ class MetaModel:
     def eval_primary_model(self):
         """Output simple report showing performance of primary model"""
 
-        # Suppress zero division warning as primary model has only one class (TRUE)
-        print(
-            classification_report(y_true=self.data[self.y_true_col],
-                                  y_pred=self.data[self.y_pred_col],
-                                  zero_division=0))
+        print(classification_report(y_true=self.data[self.y_true_col],
+                                    y_pred=self.data[self.y_pred_col],
+                                    zero_division=0))
 
         return self
 
     def fix_class_imbalance(self):
-        """Deal with class imbalance in the training dataset (using SMOTENC)"""
+        """Deal with class imbalance in the training dataset (using SMOTENC). This
+        should only be applied to the training data - not the test data."""
 
         # Mask vector identifying categorical features
         features_cat_mask = np.in1d(self.X_features, self.X_features_cat)
@@ -107,42 +105,39 @@ class MetaModel:
         return self
 
     def feature_transform_pipeline(self, feature_selection=False):
-        """Sequence of transformations applied to data before passing to ML model"""
+        """Sequence of transformations applied to data before passing to ML model
+            ----------
+            feature_selection : Bool flag if pipline should call SFS feature selection
+                                class as opposed to the ML model class
+        """
 
-        self.categorical_transformer = OneHotEncoder(handle_unknown='ignore', sparse=False)
+        self.column_transformer = compose.make_column_transformer(
+            (preprocessing.OneHotEncoder(handle_unknown='ignore',
+                                         sparse=False), self.X_features_cat),
+            # (FracdiffStat(), self.X_features_num),
+            remainder='passthrough')
 
-        self.preprocessor = ColumnTransformer(transformers=[
-            ("cat", self.categorical_transformer, self.X_features_cat),
-        ], remainder='passthrough')
+        simple_imputer = SimpleImputer(strategy='median')
 
-        simple_imputer = SimpleImputer(strategy='constant', fill_value=999)
-
-        self.fracdiff_transformer = FracdiffStat()
+        self.full_transformer = pipeline.Pipeline(
+            steps=[("column_transformer", self.column_transformer),
+                   ("simple_imputer", simple_imputer)])
 
         model = RandomForestClassifier(n_jobs=-1,
                                        criterion='entropy',
                                        class_weight='balanced_subsample')
 
-        sfs = SFS(estimator=model,
-                  k_features='best',
-                  forward=True,
-                  floating=False,
-                  scoring='roc_auc',
-                  cv=self.cv,
-                  n_jobs=-1,
-                  verbose=2)
+        # Sequential feature selector method.
+        sfs = SFS(estimator=model, k_features='best', forward=True, floating=False,
+                  scoring='roc_auc', cv=self.cv, n_jobs=-1, verbose=2)
 
         if feature_selection:
-            self.clf = Pipeline(
-                steps=[("preprocessor", self.preprocessor),
-                       ("simple_imputer", simple_imputer),
-                       ("fracdiff", self.fracdiff_transformer),
+            self.clf = pipeline.Pipeline(
+                steps=[("full_transformer", self.full_transformer),
                        ("feature_selection", sfs)])
         else:
             self.clf = Pipeline(
-                steps=[("preprocessor", self.preprocessor),
-                       ("simple_imputer", simple_imputer),
-                       ("fracdiff", self.fracdiff_transformer),
+                steps=[("full_transformer", self.full_transformer),
                        ("classifier", model)])
 
         return self
@@ -151,11 +146,12 @@ class MetaModel:
         """Trains ML classifier on training data"""
 
         self.feature_transform_pipeline()
-        self.clf.fit(self.X_train_balanced,
-                     self.y_train_balanced,
+        self.clf.fit(self.X_train,
+                     self.y_train,
                      classifier__sample_weight=self.sample_weight)
 
-        self.X_transformed_features = self.preprocessor.get_feature_names_out()
+        column_transformer = self.clf['full_transformer']['column_transformer']
+        self.X_transformed_features = column_transformer.get_feature_names_out()
 
         return self
 
@@ -168,6 +164,53 @@ class MetaModel:
         self.cv = TimeSeriesSplit(n_splits=cv_n_slpits,
                                   gap=cv_gap,
                                   max_train_size=max_train_size)
+
+        return self
+
+    def run_cross_validation(self, cv_n_splits: int, cv_gap: int):
+        """Run cross validation."""
+
+        self.setup_cross_validation(cv_n_splits, cv_gap)
+        self.precision_recall_stats = []
+        self.roc_stats = []
+        self.feature_importance = []
+        self.data.loc[:, 'clf_y_pred_proba'] = np.nan
+        self.data.loc[:, 'clf_y_pred'] = np.nan
+
+        # Sort data by date before running CV
+        data_to_cv = self.data.sort_index(level='date', ascending=True)
+        for train_idx, test_idx in self.cv.split(
+                X=data_to_cv[self.X_features], y=data_to_cv[self.y_true_col]):
+
+            self.X_train = data_to_cv.iloc[train_idx][self.X_features]
+            self.X_test = data_to_cv.iloc[test_idx][self.X_features]
+
+            self.y_train = data_to_cv.iloc[train_idx][self.y_true_col]
+            self.y_test = data_to_cv.iloc[test_idx][self.y_true_col]
+
+            self.sample_weight = data_to_cv.iloc[train_idx][self.sample_weight_col].abs().values
+
+            cv_train_from = self.X_train.index.get_level_values(
+                'date').min().strftime('%Y-%m-%d')
+            cv_train_to = self.X_train.index.get_level_values(
+                'date').max().strftime('%Y-%m-%d')
+            cv_test_from = self.X_test.index.get_level_values(
+                'date').min().strftime('%Y-%m-%d')
+            cv_test_to = self.X_test.index.get_level_values(
+                'date').max().strftime('%Y-%m-%d')
+
+            separator = " "
+            self.cv_label = separator.join([
+                'Train:', cv_train_from, cv_train_to, 'Test:', cv_test_from,
+                cv_test_to
+            ])
+            print(self.cv_label)
+
+            self.train_model()
+            self.predict()
+            self.precision_recall_stats.append(self.get_precision_recall_stats())
+            self.roc_stats.append(self.get_roc_stats())
+            self.feature_importance.append(self.get_feature_importance(label=self.cv_label))
 
         return self
 
@@ -188,7 +231,9 @@ class MetaModel:
             y=data_to_cv[::cv_sample][self.y_true_col],
             feature_selection__sample_weight=sample_weight)
 
-        self.X_transformed_features = self.preprocessor.get_feature_names_out()
+        column_transformer = self.clf['full_transformer']['column_transformer']
+        self.X_transformed_features = column_transformer.get_feature_names_out()
+
         self.most_important_features_idx = list(
             self.clf.named_steps['feature_selection'].k_feature_idx_)
 
@@ -209,51 +254,6 @@ class MetaModel:
         plt.title('Feature Selection Process & Model Performance')
         plt.grid()
         plt.show()
-
-        return self
-
-    def run_cross_validation(self, cv_n_splits: int, cv_gap: int):
-        """Run cross validation."""
-
-        self.setup_cross_validation(cv_n_splits, cv_gap)
-        self.precision_recall_stats = []
-        self.roc_stats = []
-        self.feature_importance = []
-        self.data.loc[:, 'clf_y_pred_proba'] = np.nan
-        self.data.loc[:, 'clf_y_pred'] = np.nan
-
-        # Sort data by date before running CV
-        data_to_cv = self.data.sort_index(level='date', ascending=True)
-        for train_idx, test_idx in self.cv.split(
-                X=data_to_cv[self.X_features], y=data_to_cv[self.y_true_col]):
-
-            self.X_train = data_to_cv.iloc[train_idx][self.X_features + [self.sample_weight_col]]
-            self.X_test = data_to_cv.iloc[test_idx][self.X_features]
-            self.y_train = data_to_cv.iloc[train_idx][self.y_true_col]
-            self.y_test = data_to_cv.iloc[test_idx][self.y_true_col]
-
-            cv_train_from = self.X_train.index.get_level_values(
-                'date').min().strftime('%Y-%m-%d')
-            cv_train_to = self.X_train.index.get_level_values(
-                'date').max().strftime('%Y-%m-%d')
-            cv_test_from = self.X_test.index.get_level_values(
-                'date').min().strftime('%Y-%m-%d')
-            cv_test_to = self.X_test.index.get_level_values(
-                'date').max().strftime('%Y-%m-%d')
-
-            separator = " "
-            self.cv_label = separator.join([
-                'Train:', cv_train_from, cv_train_to, 'Test:', cv_test_from,
-                cv_test_to
-            ])
-            print(self.cv_label)
-
-            self.fix_class_imbalance()
-            self.train_model()
-            self.predict()
-            self.precision_recall_stats.append(self.get_precision_recall_stats())
-            self.roc_stats.append(self.get_roc_stats())
-            self.feature_importance.append(self.get_feature_importance(label=self.cv_label))
 
         return self
 
@@ -420,7 +420,7 @@ class MetaModel:
         return temp_df
 
     def run_train_on_more_data(self, date_from):
-        """Method to train a model on the complete dataset"""
+        """Method to train a model on the larger dataset"""
 
         idx = pd.IndexSlice
 
@@ -437,8 +437,8 @@ class MetaModel:
         return self
 
     def set_model_threshold(self, model_threshold: float):
-        """Set a model threshold value that corresponds to a preferred
-        precision value"""
+        """Set a model threshold value that corresponds to preferred
+        precision / recall values"""
 
         self.model_threshold = model_threshold
 
@@ -460,7 +460,7 @@ class MetaModel:
         return self
 
     def load_model(self, filename: 'str'):
-        """Loads model from disk"""
+        """Loads model from disk to be used in freqtrade strategy"""
 
         filepath = Path('user_data', 'meta_model', filename)
         model_and_config = load(open(filepath, 'rb'))

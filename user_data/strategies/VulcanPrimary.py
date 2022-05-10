@@ -61,7 +61,7 @@ master_plot_config = {
 
 
 class VulcanPrimary(IStrategy):
-    # Using the new freqtrade API version (V3)
+
     INTERFACE_VERSION = 3
 
     timeframe = "12h"

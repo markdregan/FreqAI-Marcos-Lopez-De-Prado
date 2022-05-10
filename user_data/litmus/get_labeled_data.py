@@ -14,8 +14,8 @@ import pandas as pd
 
 class GetLabeledData:
 
-    def __init__(self, timeframe: str, latest: bool,
-                 bt_filename: str = '', bt_pkl_filename: str = ''):
+    def __init__(self, timeframe: str, latest: bool, bt_filename: str = '',
+                 bt_pkl_filename: str = ''):
 
         self.bt_dir = Path('user_data', 'backtest_results')
         self.timeframe = timeframe
