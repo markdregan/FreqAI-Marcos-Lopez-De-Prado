@@ -11,16 +11,18 @@ import seaborn as sns
 
 # from fracdiff.sklearn import FracdiffStat
 from imblearn.over_sampling import SMOTENC
+from imblearn.pipeline import Pipeline
 from joblib import dump, load
 from mlxtend.feature_selection import SequentialFeatureSelector as SFS
 from mlxtend.plotting import plot_sequential_feature_selection as plot_sfs
 from pathlib import Path
-from sklearn import compose, pipeline, preprocessing
+from sklearn import compose, preprocessing
+from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import classification_report, precision_recall_curve, roc_curve
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.pipeline import Pipeline
+# from sklearn.pipeline import Pipeline
 
 
 class MetaModel:
@@ -86,24 +88,6 @@ class MetaModel:
 
         return self
 
-    def fix_class_imbalance(self):
-        """Deal with class imbalance in the training dataset (using SMOTENC). This
-        should only be applied to the training data - not the test data."""
-
-        # Mask vector identifying categorical features
-        features_cat_mask = np.in1d(self.X_features, self.X_features_cat)
-
-        sm = SMOTENC(categorical_features=features_cat_mask)
-        self.X_train_balanced, self.y_train_balanced = sm.fit_resample(
-            self.X_train, self.y_train)
-
-        # Sample weight is added to X_train because SMOTENC does not return
-        # the index of the dataframe post rebalance. Must drop it to prevent lookahead.
-        self.sample_weight = self.X_train_balanced[self.sample_weight_col].abs().values
-        self.X_train_balanced = self.X_train_balanced.drop(columns=self.sample_weight_col)
-
-        return self
-
     def feature_transform_pipeline(self, feature_selection=False):
         """Sequence of transformations applied to data before passing to ML model
             ----------
@@ -111,17 +95,21 @@ class MetaModel:
                                 class as opposed to the ML model class
         """
 
+        # Synthetic Minority Over-sampling Technique for Nominal and Continuous features
+        features_cat_mask = np.in1d(self.X_features, self.X_features_cat)
+        imbalance_transformer = SMOTENC(categorical_features=features_cat_mask)
+
+        # Add binary column indicators for categorical features
         self.column_transformer = compose.make_column_transformer(
             (preprocessing.OneHotEncoder(handle_unknown='ignore',
                                          sparse=False), self.X_features_cat),
-            # (FracdiffStat(), self.X_features_num),
             remainder='passthrough')
 
+        # Impute NaN values
         simple_imputer = SimpleImputer(strategy='median')
 
-        self.full_transformer = pipeline.Pipeline(
-            steps=[("column_transformer", self.column_transformer),
-                   ("simple_imputer", simple_imputer)])
+        # Dimensionality reduction
+        pca = PCA(n_components=None)
 
         model = RandomForestClassifier(n_jobs=-1,
                                        criterion='entropy',
@@ -132,12 +120,18 @@ class MetaModel:
                   scoring='roc_auc', cv=self.cv, n_jobs=-1, verbose=2)
 
         if feature_selection:
-            self.clf = pipeline.Pipeline(
-                steps=[("full_transformer", self.full_transformer),
+            self.clf = Pipeline(
+                steps=[("imbalance_transformer", imbalance_transformer),
+                       ("column_transformer", self.column_transformer),
+                       ("simple_imputer", simple_imputer),
+                       ("pca", pca),
                        ("feature_selection", sfs)])
         else:
             self.clf = Pipeline(
-                steps=[("full_transformer", self.full_transformer),
+                steps=[("imbalance_transformer", imbalance_transformer),
+                       ("column_transformer", self.column_transformer),
+                       ("simple_imputer", simple_imputer),
+                       ("pca", pca),
                        ("classifier", model)])
 
         return self
@@ -148,9 +142,10 @@ class MetaModel:
         self.feature_transform_pipeline()
         self.clf.fit(self.X_train,
                      self.y_train,
-                     classifier__sample_weight=self.sample_weight)
+                     # classifier__sample_weight=self.sample_weight
+                     )
 
-        column_transformer = self.clf['full_transformer']['column_transformer']
+        column_transformer = self.clf.named_steps['column_transformer']
         self.X_transformed_features = column_transformer.get_feature_names_out()
 
         return self
@@ -225,13 +220,14 @@ class MetaModel:
         data_to_cv = self.data.sort_index(level='date', ascending=True)
 
         # Fit model with sample weights passed
-        sample_weight = data_to_cv[::cv_sample][self.sample_weight_col].abs().values
+        # sample_weight = data_to_cv[::cv_sample][self.sample_weight_col].abs().values
         self.clf.fit(
             X=data_to_cv[::cv_sample][self.X_features],
             y=data_to_cv[::cv_sample][self.y_true_col],
-            feature_selection__sample_weight=sample_weight)
+            # feature_selection__sample_weight=sample_weight
+        )
 
-        column_transformer = self.clf['full_transformer']['column_transformer']
+        column_transformer = self.clf.named_steps['column_transformer']
         self.X_transformed_features = column_transformer.get_feature_names_out()
 
         self.most_important_features_idx = list(
@@ -331,8 +327,7 @@ class MetaModel:
         """Get and store feature importances during cross validation"""
 
         temp_df = pd.concat([
-            pd.DataFrame(self.X_transformed_features, columns=['feature_name'
-                                                               ]),
+            pd.DataFrame(self.X_transformed_features, columns=['feature_name']),
             pd.DataFrame(
                 self.clf.named_steps['classifier'].feature_importances_,
                 columns=['feature_importance'])
