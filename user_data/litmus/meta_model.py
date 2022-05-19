@@ -9,9 +9,6 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-# from fracdiff.sklearn import FracdiffStat
-from imblearn.over_sampling import SMOTENC
-from imblearn.pipeline import Pipeline
 from joblib import dump, load
 from mlxtend.feature_selection import SequentialFeatureSelector as SFS
 from mlxtend.plotting import plot_sequential_feature_selection as plot_sfs
@@ -22,7 +19,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import classification_report, precision_recall_curve, roc_curve
 from sklearn.model_selection import TimeSeriesSplit
-# from sklearn.pipeline import Pipeline
+from sklearn.pipeline import Pipeline
 
 
 class MetaModel:
@@ -79,11 +76,21 @@ class MetaModel:
 
         return self
 
-    def eval_primary_model(self):
-        """Output simple report showing performance of primary model"""
+    def classification_report(self, model: str):
+        """Print classification report"""
 
-        print(classification_report(y_true=self.data[self.y_true_col],
-                                    y_pred=self.data[self.y_pred_col],
+        if model == 'primary':
+            y_true = self.y_true_col
+            y_pred = self.y_pred_col
+        elif model == 'meta':
+            y_true = self.y_true_col
+            y_pred = 'clf_y_pred'
+        else:
+            raise ValueError
+
+        temp_df = self.data.loc[self.data[y_pred].dropna().index]
+        print(classification_report(y_true=temp_df.loc[:, y_true],
+                                    y_pred=temp_df.loc[:, y_pred],
                                     zero_division=0))
 
         return self
@@ -94,10 +101,6 @@ class MetaModel:
             feature_selection : Bool flag if pipline should call SFS feature selection
                                 class as opposed to the ML model class
         """
-
-        # Synthetic Minority Over-sampling Technique for Nominal and Continuous features
-        features_cat_mask = np.in1d(self.X_features, self.X_features_cat)
-        imbalance_transformer = SMOTENC(categorical_features=features_cat_mask)
 
         # Add binary column indicators for categorical features
         self.column_transformer = compose.make_column_transformer(
@@ -115,21 +118,19 @@ class MetaModel:
                                        criterion='entropy',
                                        class_weight='balanced_subsample')
 
-        # Sequential feature selector method.
+        # Sequential feature selector method
         sfs = SFS(estimator=model, k_features='best', forward=True, floating=False,
                   scoring='roc_auc', cv=self.cv, n_jobs=-1, verbose=2)
 
         if feature_selection:
             self.clf = Pipeline(
-                steps=[("imbalance_transformer", imbalance_transformer),
-                       ("column_transformer", self.column_transformer),
+                steps=[("column_transformer", self.column_transformer),
                        ("simple_imputer", simple_imputer),
                        ("pca", pca),
                        ("feature_selection", sfs)])
         else:
             self.clf = Pipeline(
-                steps=[("imbalance_transformer", imbalance_transformer),
-                       ("column_transformer", self.column_transformer),
+                steps=[("column_transformer", self.column_transformer),
                        ("simple_imputer", simple_imputer),
                        ("pca", pca),
                        ("classifier", model)])
@@ -142,7 +143,7 @@ class MetaModel:
         self.feature_transform_pipeline()
         self.clf.fit(self.X_train,
                      self.y_train,
-                     # classifier__sample_weight=self.sample_weight
+                     classifier__sample_weight=self.sample_weight
                      )
 
         column_transformer = self.clf.named_steps['column_transformer']
@@ -209,6 +210,22 @@ class MetaModel:
 
         return self
 
+    def run_train_on_more_data(self, date_from):
+        """Method to train a model on the larger dataset"""
+
+        idx = pd.IndexSlice
+
+        self.X_train = self.data.loc[idx[:, :, date_from:]][self.X_features]
+        self.y_train = self.data.loc[idx[:, :, date_from:]][self.y_true_col]
+        self.sample_weight = self.data.loc[
+            idx[:, :, date_from:]][self.sample_weight_col].abs().values
+
+        self.train_model()
+        self.feature_importance.append(
+            self.get_feature_importance(label='full_dataset'))
+
+        return self
+
     def get_most_important_features(self, cv_n_splits: int, cv_gap: int, cv_sample: int = 10):
         """An iterative procedure to select the most important features for the model
         TODO: Add early stopping when PR is merged on master"""
@@ -220,11 +237,11 @@ class MetaModel:
         data_to_cv = self.data.sort_index(level='date', ascending=True)
 
         # Fit model with sample weights passed
-        # sample_weight = data_to_cv[::cv_sample][self.sample_weight_col].abs().values
+        sample_weight = data_to_cv[::cv_sample][self.sample_weight_col].abs().values
         self.clf.fit(
             X=data_to_cv[::cv_sample][self.X_features],
             y=data_to_cv[::cv_sample][self.y_true_col],
-            # feature_selection__sample_weight=sample_weight
+            feature_selection__sample_weight=sample_weight
         )
 
         column_transformer = self.clf.named_steps['column_transformer']
@@ -347,7 +364,7 @@ class MetaModel:
             'feature_name')['feature_importance'].median().sort_values(
                 ascending=False).index
         sns.color_palette()
-        plt.figure(figsize=(7, plot_height / 2.0))
+        plt.figure(figsize=(7, plot_height))
         _ = sns.pointplot(x="feature_importance",
                           y="feature_name",
                           hue="source",
@@ -384,18 +401,6 @@ class MetaModel:
 
         return results
 
-    def cv_classification_report(self):
-        """Classification report representing all the predictions from
-        all the cross validation folds"""
-
-        # Generate classification report
-        temp_df = self.data.loc[self.data['clf_y_pred'].dropna().index]
-        print(
-            classification_report(temp_df.loc[:, self.y_true_col],
-                                  temp_df.loc[:, 'clf_y_pred']))
-
-        return self
-
     def model_threshold_table(self) -> pd.DataFrame:
         """Return a table showing precision, recall, threshold relationships"""
 
@@ -413,23 +418,6 @@ class MetaModel:
         temp_df
 
         return temp_df
-
-    def run_train_on_more_data(self, date_from):
-        """Method to train a model on the larger dataset"""
-
-        idx = pd.IndexSlice
-
-        self.X_train = self.data.loc[
-            idx[:, :, date_from:]][self.X_features + [self.sample_weight_col]]
-        self.y_train = self.data.loc[
-            idx[:, :, date_from:]][self.y_true_col]
-
-        self.fix_class_imbalance()
-        self.train_model()
-        self.feature_importance.append(
-            self.get_feature_importance(label='full_dataset'))
-
-        return self
 
     def set_model_threshold(self, model_threshold: float):
         """Set a model threshold value that corresponds to preferred

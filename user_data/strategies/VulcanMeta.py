@@ -115,7 +115,7 @@ class VulcanMeta(VulcanPrimary):
         dataframe.loc[
             (qtpylib.crossed_above(dataframe['buy_trigger'], 0.5))
             # If meta model probability is above threshold
-            & (dataframe['meta_model_proba'] > 0.5)
+            & (dataframe['meta_model_proba'] > 0.3)
             # Volume > 0 for backtesting
             & (dataframe['volume'] > 0),
             ['enter_long', 'enter_tag']] = (1, 'primary_buy_trigger')
