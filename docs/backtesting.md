@@ -320,6 +320,9 @@ A backtesting result will look like that:
 | Avg. Duration Loser         | 6:55:00             |
 | Rejected Entry signals      | 3089                |
 | Entry/Exit Timeouts         | 0 / 0               |
+| Canceled Trade Entries      | 34                  |
+| Canceled Entry Orders       | 123                 |
+| Replaced Entry Orders       | 89                  |
 |                             |                     |
 | Min balance                 | 0.00945123 BTC      |
 | Max balance                 | 0.01846651 BTC      |
@@ -416,6 +419,9 @@ It contains some useful key metrics about performance of your strategy on backte
 | Avg. Duration Loser         | 6:55:00             |
 | Rejected Entry signals      | 3089                |
 | Entry/Exit Timeouts         | 0 / 0               |
+| Canceled Trade Entries      | 34                  |
+| Canceled Entry Orders       | 123                 |
+| Replaced Entry Orders       | 89                  |
 |                             |                     |
 | Min balance                 | 0.00945123 BTC      |
 | Max balance                 | 0.01846651 BTC      |
@@ -447,6 +453,9 @@ It contains some useful key metrics about performance of your strategy on backte
 - `Avg. Duration Winners` / `Avg. Duration Loser`: Average durations for winning and losing trades.
 - `Rejected Entry signals`: Trade entry signals that could not be acted upon due to `max_open_trades` being reached.
 - `Entry/Exit Timeouts`: Entry/exit orders which did not fill (only applicable if custom pricing is used).
+- `Canceled Trade Entries`: Number of trades that have been canceled by user request via `adjust_entry_price`.
+- `Canceled Entry Orders`: Number of entry orders that have been canceled by user request via `adjust_entry_price`.
+- `Replaced Entry Orders`: Number of entry orders that have been replaced by user request via `adjust_entry_price`.
 - `Min balance` / `Max balance`: Lowest and Highest Wallet balance during the backtest period.
 - `Max % of account underwater`: Maximum percentage your account has decreased from the top since the simulation started.
 Calculated as the maximum of `(Max Balance - Current Balance) / (Max Balance)`.
@@ -466,7 +475,7 @@ You can get an overview over daily / weekly or monthly results by using the `--b
 To visualize daily and weekly breakdowns, you can use the following:
 
 ``` bash
-freqtrade backtesting --strategy MyAwesomeStrategy --breakdown day month
+freqtrade backtesting --strategy MyAwesomeStrategy --breakdown day week
 ```
 
 ``` output
@@ -482,7 +491,7 @@ freqtrade backtesting --strategy MyAwesomeStrategy --breakdown day month
 
 ```
 
-The output will show a table containing the realized absolute Profit (in stake currency) for the given timeperiod, as well as wins, draws and losses that materialized (closed) on this day.
+The output will show a table containing the realized absolute Profit (in stake currency) for the given timeperiod, as well as wins, draws and losses that materialized (closed) on this day. Below that there will be a second table for the summarized values of weeks indicated by the date of the closing Sunday. The same would apply to a monthly breakdown indicated by the last day of the month.
 
 ### Backtest result caching
 
