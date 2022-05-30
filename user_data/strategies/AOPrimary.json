@@ -1,0 +1,109 @@
+
+{
+    "timeframe": "5m",
+    "strategy_name": "AOPrimary",
+    "max_open_trades": -1,
+    "stake_currency": "USDT",
+    "stake_amount": 1000,
+    "tradable_balance_ratio": 0.99,
+    "available_capital": 100000000,
+    "amend_last_stake_amount": true,
+    "fiat_display_currency": "USD",
+    "dry_run": true,
+    "dry_run_wallet": 100000000,
+    "use_exit_signal": true,
+    "cancel_open_orders_on_exit": true,
+    "custom_price_max_distance_ratio": 0.50,
+    "unfilledtimeout": {
+        "entry": 3000,
+        "exit": 3000,
+        "unit": "minutes"
+    },
+    "entry_pricing": {
+        "price_side": "ask",
+        "price_last_balance": 0.0,
+        "use_order_book": true,
+        "order_book_top": 1,
+        "check_depth_of_market": {
+            "enabled": false,
+            "bids_to_ask_delta": 1
+        }
+    },
+    "exit_pricing": {
+        "price_side": "bid",
+        "use_order_book": true,
+        "order_book_top": 1
+    },
+    "order_types": {
+        "entry": "market",
+        "exit": "market",
+        "emergencyexit": "market",
+        "forceentry": "market",
+        "forceexit": "market",
+        "stoploss": "market",
+        "stoploss_on_exchange": false,
+        "stoploss_on_exchange_interval": 60
+    },
+    "exchange": {
+        "name": "binance",
+        "key": "jQ93pEoaMuo2do5FfWUewC6QRH8Hu3hG7YE9TBu4ws9WcWg9tc8GTJTRFjkNLDxF",
+        "secret": "Dgb0W2sEb4jh0Hya9WxFHAVNky1Ozu2rHBAk8IljxVEOP3jvdnD1ylv531flI3Sk",
+        "ccxt_config": {},
+        "ccxt_async_config": {},
+        "pair_whitelist": [
+            "ETH/USDT",
+            "BTC/USDT",
+            "SOL/USDT",
+	        "ADA/USDT",
+	        "MATIC/USDT",
+	        "1INCH/USDT",
+	        "FTM/USDT",
+	        "ATOM/USDT",
+	        "AAVE/USDT",
+	        "AVAX/USDT",
+	        "LINK/USDT",
+	        "KAVA/USDT",
+	        "PYR/USDT",
+	        "XRP/USDT",
+            "OCEAN/USDT"
+        ],
+        "pair_blacklist": [
+
+        ],
+        "skip_pair_validation": true
+    },
+    "pairlists": [
+        {
+            "method": "StaticPairList",
+            "allow_inactive": true
+        },
+        {
+            "method": "ShuffleFilter"
+        }
+    ],
+    "telegram": {
+        "enabled": false,
+        "token": "5012333300:AAFiwgqakXFwAsDBLqgXDLTnWqQCMBsYbK4",
+        "chat_id": "-729673394",
+        "chat": {
+            "id": -729673394
+        }
+    },
+    "api_server": {
+        "enabled": true,
+        "listen_ip_address": "127.0.0.1",
+        "listen_port": 8080,
+        "verbosity": "error",
+        "enable_openapi": false,
+        "jwt_secret_key": "575189dbf1e3bcbeda0d7b69506fb48e95826f481ce17a38c5ca8ba9ffe5911e",
+        "CORS_origins": [],
+        "username": "LitmusBot",
+        "password": "KeirMarkHugh"
+    },
+    "bot_name": "LitmusBot",
+    "initial_state": "running",
+    "forceentry_enable": false,
+    "internals": {
+        "process_throttle_secs": 5
+    }
+}

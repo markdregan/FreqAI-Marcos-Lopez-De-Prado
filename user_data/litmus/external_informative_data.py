@@ -5,7 +5,6 @@
 # Author:   markdregan@gmail.com
 
 from pathlib import Path
-from ta import add_all_ta_features
 
 import pandas as pd
 import yfinance as yf
@@ -53,14 +52,3 @@ def load_local_data(file_name: str):
         dict_df[g] = df.reset_index(level='ticker', drop=True)
 
     return dict_df
-
-
-def add_ta_informative(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
-    """Add TA features and rename columns"""
-
-    df_ta = add_all_ta_features(df, open="open", high="high", low="low",
-                                close="close", volume="volume", fillna=False)
-
-    df_ta.columns = [x + suffix for x in df_ta.columns]
-
-    return df_ta

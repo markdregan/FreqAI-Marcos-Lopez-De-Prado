@@ -1,25 +1,37 @@
 # Helper functions for trading indicators
 
-import numpy as np
+from ta import add_all_ta_features
+
 import pandas as pd
 
 
-def HA(open, high, low, close) -> pd.DataFrame:
+def heikin_ashi(df):
     """Compute Heiken Ashi candles for any OHLC timeseries."""
 
-    df_HA = pd.DataFrame(columns=['open', 'high', 'low', 'close', 'is_green'],
-                         index=range(0, len(open.index)))
-    df_HA.loc[:, 'close'] = (open + high + low + close) / 4.0
+    heikin_ashi_df = pd.DataFrame(index=df.index.values, columns=['open', 'high', 'low', 'close'])
 
-    for i in range(0, len(open)):
+    heikin_ashi_df['close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
+
+    for i in range(len(df)):
         if i == 0:
-            df_HA.at[i, 'open'] = ((open.iloc[i] + close.iloc[i]) / 2.0)
+            heikin_ashi_df.iat[0, 0] = df['open'].iloc[0]
         else:
-            df_HA.at[i, 'open'] = ((open.iloc[i - 1] + close.iloc[i - 1]) / 2.0)
+            heikin_ashi_df.iat[i, 0] = (heikin_ashi_df.iat[i - 1, 0] + heikin_ashi_df.iat[
+                i - 1, 3]) / 2
 
-    df_HA.loc[:, 'high'] = pd.concat([open, close, high], axis=1).max(axis=1)
-    df_HA.loc[:, 'low'] = pd.concat([open, close, low], axis=1).min(axis=1)
+    heikin_ashi_df['high'] = heikin_ashi_df.loc[:, ['open', 'close']].join(df['high']).max(axis=1)
 
-    df_HA.loc[:, 'is_green'] = np.where(df_HA.loc[:, 'open'] < df_HA.loc[:, 'close'], 1, 0)
+    heikin_ashi_df['low'] = heikin_ashi_df.loc[:, ['open', 'close']].join(df['low']).min(axis=1)
 
-    return df_HA
+    return heikin_ashi_df
+
+
+def add_ta_informative(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
+    """Add TA features and rename columns"""
+
+    df_ta = add_all_ta_features(df, open="open", high="high", low="low",
+                                close="close", volume="volume", fillna=False)
+
+    df_ta.columns = [x + suffix for x in df_ta.columns]
+
+    return df_ta

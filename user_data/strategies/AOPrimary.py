@@ -1,12 +1,14 @@
-# Sulphur (acid) strategy.
+# AO Primary Strategy
+# Tradingview: https://www.tradingview.com/chart/WeEVLg4V/
 # Author: markdregan@gmail.com
 
 from freqtrade.exchange import timeframe_to_prev_date
 from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy, merge_informative_pair
+import numpy as np
 from pandas import DataFrame
 from ta import add_all_ta_features
-from user_data.litmus import external_informative_data as eid
+from ta.momentum import AwesomeOscillatorIndicator
 from user_data.litmus import indicator_helpers
 
 import freqtrade.vendor.qtpylib.indicators as qtpylib
@@ -16,22 +18,22 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 master_plot_config = {
-    "main_plot": {
-        "SMA": {
-            "color": "red"
-        },
-    },
     "subplots": {
-        "Buy & Sell": {
-            "ha_is_green": {
+        "AO": {
+            "ao": {
                 "color": "green"
+            },
+        },
+        "POS": {
+            "ao_pos": {
+                "color": "purple"
             },
         },
     },
 }
 
 
-class SulphurPrimary(IStrategy):
+class AOPrimary(IStrategy):
 
     INTERFACE_VERSION = 3
 
@@ -74,11 +76,13 @@ class SulphurPrimary(IStrategy):
 
         # Informative: BTC 5m
         self.dataframe_btc_5m = self.dp.get_pair_dataframe(pair='BTC/USDT', timeframe='5m')
-        self.dataframe_btc_5m = eid.add_ta_informative(self.dataframe_btc_5m, suffix='_btc_5m')
+        self.dataframe_btc_5m = indicator_helpers.add_ta_informative(
+            self.dataframe_btc_5m, suffix='_btc_5m')
 
         # Informative: BTC 1h
         self.dataframe_btc_1h = self.dp.get_pair_dataframe(pair='BTC/USDT', timeframe='1h')
-        self.dataframe_btc_1h = eid.add_ta_informative(self.dataframe_btc_1h, suffix='_btc_1h')
+        self.dataframe_btc_1h = indicator_helpers.add_ta_informative(
+            self.dataframe_btc_1h, suffix='_btc_1h')
 
     def populate_indicators(self, dataframe: DataFrame,
                             metadata: dict) -> DataFrame:
@@ -88,13 +92,14 @@ class SulphurPrimary(IStrategy):
             dataframe, open="open", high="high", low="low",
             close="close", volume="volume",  fillna=True)
 
-        # Kama
-        # TODO
+        # AO Indicator
+        ao = AwesomeOscillatorIndicator(dataframe['high'], dataframe['low'], window1=5, window2=34)
+        dataframe['ao'] = ao.awesome_oscillator()
 
-        # Heiken Ashi
-        ha_columns = ['ha_open', 'ha_high', 'ha_low', 'ha_close', 'ha_is_green']
-        dataframe[ha_columns] = indicator_helpers.HA(
-            dataframe['open'], dataframe['high'], dataframe['low'], dataframe['close'])
+        # AO Position
+        dataframe['ao_pos'] = 0
+        dataframe['ao_pos'] = np.where(dataframe['ao'] > dataframe['ao'].shift(1), 1, 0)
+        dataframe['ao_pos'] = np.where(dataframe['ao'] < dataframe['ao'].shift(1), 0, 1)
 
         # Merge informative pairs
         # Note: `.copy` needed to avoid `date` column being removed during merge which means column
@@ -121,7 +126,7 @@ class SulphurPrimary(IStrategy):
         """
 
         dataframe.loc[
-            (qtpylib.crossed_above(dataframe['ha_is_green'], 0.5))
+            (qtpylib.crossed_above(dataframe['ao_pos'], 0.5))
             & (dataframe['volume'] > 0),
             ['enter_long', 'enter_tag']] = (1, 'enter_long_trigger')
 
@@ -129,10 +134,10 @@ class SulphurPrimary(IStrategy):
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
 
-        dataframe.loc[
-            (qtpylib.crossed_below(dataframe['ha_is_green'], 0.5))
+        """dataframe.loc[
+            (qtpylib.crossed_below(dataframe['ao_pos'], 0.5))
             & (dataframe['volume'] > 0),
-            ['exit_long', 'enter_tag']] = (1, 'exit_long_trigger')
+            ['exit_long', 'enter_tag']] = (1, 'exit_long_trigger')"""
 
         return dataframe
 
@@ -150,8 +155,8 @@ class SulphurPrimary(IStrategy):
             return : custom sell_reason
         """
 
-        # Sell any positions at a loss if they are held for more than X hours.
-        if (current_time - trade.open_date_utc).seconds > 150:
+        # Sell any positions at a loss if they are held for more than X seconds.
+        if (current_time - trade.open_date_utc).seconds > 10000:
             return 'vertical_barrier_force_sell'
 
         # Triple Barrier Method: Upper and lower barriers based on EMA Daily Volatility
@@ -161,7 +166,7 @@ class SulphurPrimary(IStrategy):
         # Upper / lower barrier multiplier
         # Does NOT need to be symmetric
         PT_MULTIPLIER = 1.02
-        SL_MULTIPLIER = 0.98
+        SL_MULTIPLIER = 0.92
 
         # Look up original candle on the trade date
         trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
