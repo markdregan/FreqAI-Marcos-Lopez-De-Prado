@@ -50,3 +50,11 @@ python-dateutil==2.8.2
 
 #Futures
 schedule==1.1.0
+
+# Litmus
+joblib==1.1.0
+mlxtend==0.20.0
+pathlib==1.0.1
+seaborn==0.11.2
+scikit-learn==1.1.0
+yfinance==0.1.70

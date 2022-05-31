@@ -91,12 +91,12 @@ class KamaPrimary(IStrategy):
         # Informative: BTC 5m
         self.dataframe_btc_5m = self.dp.get_pair_dataframe(pair='BTC/USDT', timeframe='5m')
         self.dataframe_btc_5m = indicator_helpers.add_ta_informative(
-            self.dataframe_btc_5m, suffix='_btc_5m')
+            self.dataframe_btc_5m, suffix='_btc')
 
         # Informative: BTC 1h
         self.dataframe_btc_1h = self.dp.get_pair_dataframe(pair='BTC/USDT', timeframe='1h')
         self.dataframe_btc_1h = indicator_helpers.add_ta_informative(
-            self.dataframe_btc_1h, suffix='_btc_1h')
+            self.dataframe_btc_1h, suffix='_btc')
 
     def populate_indicators(self, dataframe: DataFrame,
                             metadata: dict) -> DataFrame:
@@ -105,6 +105,13 @@ class KamaPrimary(IStrategy):
         dataframe = add_all_ta_features(
             dataframe, open="open", high="high", low="low",
             close="close", volume="volume",  fillna=True)
+
+        # Informative signals of pair at lower time resolution
+        low_res_tf = '1h'
+        dataframe_low_res = self.dp.get_pair_dataframe(
+            pair=metadata['pair'], timeframe=low_res_tf)
+        dataframe_low_res = indicator_helpers.add_ta_informative(
+            dataframe_low_res, suffix='')
 
         # KAMA
         kama_window = 14
@@ -133,10 +140,13 @@ class KamaPrimary(IStrategy):
         # not available for joining for subsequent pairs
         dataframe = merge_informative_pair(
             dataframe, self.dataframe_btc_5m.copy(), self.timeframe,
-            '5m', ffill=True, date_column='date_btc_5m')
+            '5m', ffill=True, date_column='date_btc')
         dataframe = merge_informative_pair(
             dataframe, self.dataframe_btc_1h.copy(), self.timeframe,
-            '1h', ffill=True, date_column='date_btc_1h')
+            '1h', ffill=True, date_column='date_btc')
+        dataframe = merge_informative_pair(
+            dataframe, dataframe_low_res, self.timeframe,
+            '1h', ffill=True, date_column='date')
 
         # Add reference to pair so ML model can generate feature for prediction
         dataframe['pair_copy'] = metadata['pair']
@@ -183,7 +193,8 @@ class KamaPrimary(IStrategy):
         """
 
         # Sell any positions at a loss if they are held for more than X seconds.
-        if (current_time - trade.open_date_utc).seconds > 10000:
+        vertical_barrier_seconds = 3 * 60 * 60
+        if (current_time - trade.open_date_utc).seconds > vertical_barrier_seconds:
             return 'vertical_barrier_force_sell'
 
         # Triple Barrier Method: Upper and lower barriers based on EMA Daily Volatility
@@ -192,8 +203,8 @@ class KamaPrimary(IStrategy):
 
         # Upper / lower barrier multiplier
         # Does NOT need to be symmetric
-        PT_MULTIPLIER = 1.02
-        SL_MULTIPLIER = 0.92
+        PT_MULTIPLIER = 1.03
+        SL_MULTIPLIER = 0.95
 
         # Look up original candle on the trade date
         trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
