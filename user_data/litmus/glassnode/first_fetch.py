@@ -31,7 +31,8 @@ for token_idx, token in enumerate(top_tokens):
     res = requests.get("https://api.glassnode.com/v1/metrics/{}".format(metrics[0]),
                        params={'a': token, 'api_key': API_KEY})
     df = pd.read_json(res.text, convert_dates=['t'])
-    df.rename({'v': metrics[0].replace('/', '_')}, axis='columns', inplace=True)
+    df.rename({'v': metrics[0].replace('/', '_'),
+               't': 'date'}, axis='columns', inplace=True)
 
     period_start = time.time()
     for i in range(1, len(metrics)):
@@ -55,8 +56,9 @@ for token_idx, token in enumerate(top_tokens):
 
                 # Merge column with existing df for given token
                 if not df2.empty and df2.dtypes[df2.columns[1]] != dict:
-                    df2.rename({'v': metric.replace('/', '_')}, axis='columns', inplace=True)
-                    df = pd.merge(df, df2, on='t', how='left')
+                    df2.rename({'v': metric.replace('/', '_'),
+                                't': 'date'}, axis='columns', inplace=True)
+                    df = pd.merge(df, df2, on='date', how='left')
 
             except ValueError:
                 valid_requests[token].remove(metric)
@@ -78,20 +80,14 @@ for token_idx, token in enumerate(top_tokens):
         if end - beg > 2 and not slept:
             print(f"{metric} is a slow request! Consider removing it from metrics")
 
-        # Send to Big Query
+        # Save to CSV
         if i == metric_count - 1:
             file_dir = '/Users/mregan/Dev/litmus/user_data/data/glassnode/'
             file_name = f'glassnode_{token}_1d.csv'
-            df.to_csv(file_dir + file_name)
+            df.to_csv(file_dir + file_name, index=False)
 
     # Update the list of valid requests. This does not need to be done as regularly but
     # performance is dictated by waiting on requests. So it is no harm to do some extra work
     with open(DIR + 'data/valid_requests.json', 'w') as f:
         json.dump(valid_requests, f, indent=4)
-        f.close()
-
-    # If program fails suddenly, record which coins are left to process so execution can be resumed.
-    with open(FILE, 'w') as f:
-        for i in range(token_idx + 1, len(top_tokens)):
-            f.write(top_tokens[i] + "\n")
         f.close()

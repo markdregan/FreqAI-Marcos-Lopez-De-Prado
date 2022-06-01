@@ -9,7 +9,7 @@ import numpy as np
 from pandas import DataFrame
 from ta import add_all_ta_features
 from ta.momentum import KAMAIndicator
-from user_data.litmus import indicator_helpers
+from user_data.litmus import indicator_helpers, external_informative_data as eid
 
 import freqtrade.vendor.qtpylib.indicators as qtpylib
 
@@ -88,6 +88,10 @@ class KamaPrimary(IStrategy):
 
     def bot_loop_start(self, **kwargs) -> None:
 
+        # Informative: Glassnode 1d
+        glassnode_df = eid.load_local_data('glassnode_BTC_1d.csv', 'glassnode')
+        self.dataframe_glassnode_1d = glassnode_df  # TODO: Add fracdiff in pipeline
+
         # Informative: BTC 5m
         self.dataframe_btc_5m = self.dp.get_pair_dataframe(pair='BTC/USDT', timeframe='5m')
         self.dataframe_btc_5m = indicator_helpers.add_ta_informative(
@@ -144,6 +148,9 @@ class KamaPrimary(IStrategy):
         dataframe = merge_informative_pair(
             dataframe, self.dataframe_btc_1h.copy(), self.timeframe,
             '1h', ffill=True, date_column='date_btc')
+        dataframe = merge_informative_pair(
+            dataframe, self.dataframe_glassnode_1d.copy(), self.timeframe,
+            '1d', ffill=True, date_column='date')
         dataframe = merge_informative_pair(
             dataframe, dataframe_low_res, self.timeframe,
             '1h', ffill=True, date_column='date')
