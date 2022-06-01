@@ -1,0 +1,8 @@
+market/price_usd_close
+market/marketcap_usd
+addresses/sending_to_exchanges_count
+addresses/receiving_from_exchanges_count
+addresses/count
+addresses/sending_count
+addresses/receiving_count
+addresses/active_count

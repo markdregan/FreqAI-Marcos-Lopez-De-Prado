@@ -64,7 +64,11 @@
 	        "LINK/USDT",
 	        "KAVA/USDT",
 	        "XRP/USDT",
-            "OCEAN/USDT"
+            "OCEAN/USDT",
+            "SRM/USDT",
+            "NEAR/USDT",
+            "FTT/USDT",
+            "DOT/USDT"
         ],
         "pair_blacklist": [
 
