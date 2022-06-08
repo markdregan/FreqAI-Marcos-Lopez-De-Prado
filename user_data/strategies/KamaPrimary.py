@@ -7,11 +7,10 @@ from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy, merge_informative_pair
 import numpy as np
 from pandas import DataFrame
-from ta import add_all_ta_features
-from ta.momentum import KAMAIndicator
 from user_data.litmus import indicator_helpers, external_informative_data as eid
 
 import freqtrade.vendor.qtpylib.indicators as qtpylib
+import ta.momentum
 
 # Prevent pandas complaining with future warning errors
 import warnings
@@ -90,37 +89,37 @@ class KamaPrimary(IStrategy):
 
         # Informative: Glassnode 1d
         glassnode_df = eid.load_local_data('glassnode_BTC_1d.csv', 'glassnode')
-        self.dataframe_glassnode_1d = glassnode_df  # TODO: Add fracdiff in pipeline
+        self.dataframe_glassnode_1d = indicator_helpers.add_single_ta_informative(
+            glassnode_df, ta.momentum.ppo, suffix='_ppo')
 
         # Informative: BTC 5m
         self.dataframe_btc_5m = self.dp.get_pair_dataframe(pair='BTC/USDT', timeframe='5m')
-        self.dataframe_btc_5m = indicator_helpers.add_ta_informative(
+        self.dataframe_btc_5m = indicator_helpers.add_all_ta_informative(
             self.dataframe_btc_5m, suffix='_btc')
 
         # Informative: BTC 1h
         self.dataframe_btc_1h = self.dp.get_pair_dataframe(pair='BTC/USDT', timeframe='1h')
-        self.dataframe_btc_1h = indicator_helpers.add_ta_informative(
+        self.dataframe_btc_1h = indicator_helpers.add_all_ta_informative(
             self.dataframe_btc_1h, suffix='_btc')
 
     def populate_indicators(self, dataframe: DataFrame,
                             metadata: dict) -> DataFrame:
 
         # Apply TA indicators to the pair dataframe
-        dataframe = add_all_ta_features(
-            dataframe, open="open", high="high", low="low",
-            close="close", volume="volume",  fillna=True)
+        dataframe = indicator_helpers.add_all_ta_informative(
+            dataframe, suffix='')
 
         # Informative signals of pair at lower time resolution
         low_res_tf = '1h'
         dataframe_low_res = self.dp.get_pair_dataframe(
             pair=metadata['pair'], timeframe=low_res_tf)
-        dataframe_low_res = indicator_helpers.add_ta_informative(
+        dataframe_low_res = indicator_helpers.add_all_ta_informative(
             dataframe_low_res, suffix='')
 
         # KAMA
         kama_window = 14
-        kama = KAMAIndicator(dataframe['close'], window=kama_window, pow1=2, pow2=20)
-        dataframe['kama'] = kama.kama()
+        dataframe['kama'] = ta.momentum.kama(
+            dataframe['close'], window=kama_window, pow1=2, pow2=20)
         dataframe['kama_delta'] = dataframe['kama'] - dataframe['kama'].shift(1)
 
         # Entry/Exit dynamic threshold
@@ -150,7 +149,7 @@ class KamaPrimary(IStrategy):
             '1h', ffill=True, date_column='date_btc')
         dataframe = merge_informative_pair(
             dataframe, self.dataframe_glassnode_1d.copy(), self.timeframe,
-            '1d', ffill=True, date_column='date')
+            '1d', ffill=True, date_column='date_ppo')
         dataframe = merge_informative_pair(
             dataframe, dataframe_low_res, self.timeframe,
             '1h', ffill=True, date_column='date')
@@ -200,7 +199,7 @@ class KamaPrimary(IStrategy):
         """
 
         # Sell any positions at a loss if they are held for more than X seconds.
-        vertical_barrier_seconds = 3 * 60 * 60
+        vertical_barrier_seconds = 4 * 60 * 60
         if (current_time - trade.open_date_utc).seconds > vertical_barrier_seconds:
             return 'vertical_barrier_force_sell'
 
@@ -210,8 +209,8 @@ class KamaPrimary(IStrategy):
 
         # Upper / lower barrier multiplier
         # Does NOT need to be symmetric
-        PT_MULTIPLIER = 1.03
-        SL_MULTIPLIER = 0.95
+        PT_MULTIPLIER = 1.02
+        SL_MULTIPLIER = 0.96
 
         # Look up original candle on the trade date
         trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)

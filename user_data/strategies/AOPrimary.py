@@ -76,12 +76,12 @@ class AOPrimary(IStrategy):
 
         # Informative: BTC 5m
         self.dataframe_btc_5m = self.dp.get_pair_dataframe(pair='BTC/USDT', timeframe='5m')
-        self.dataframe_btc_5m = indicator_helpers.add_ta_informative(
+        self.dataframe_btc_5m = indicator_helpers.add_all_ta_informative(
             self.dataframe_btc_5m, suffix='_btc_5m')
 
         # Informative: BTC 1h
         self.dataframe_btc_1h = self.dp.get_pair_dataframe(pair='BTC/USDT', timeframe='1h')
-        self.dataframe_btc_1h = indicator_helpers.add_ta_informative(
+        self.dataframe_btc_1h = indicator_helpers.add_all_ta_informative(
             self.dataframe_btc_1h, suffix='_btc_1h')
 
     def populate_indicators(self, dataframe: DataFrame,

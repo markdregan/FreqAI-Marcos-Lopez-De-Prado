@@ -95,17 +95,20 @@ class MetaModel:
 
         return self
 
-    def feature_transform_pipeline(self, feature_selection=False):
+    def feature_transform_pipeline(self, feature_selection=False, fixed_features=None):
         """Sequence of transformations applied to data before passing to ML model
             ----------
             feature_selection : Bool flag if pipline should call SFS feature selection
                                 class as opposed to the ML model class
+            fixed_features :    tuple of feature indices that should not be optimized
+                                over for SFS feature selection
         """
 
         # Add binary column indicators for categorical features
         self.column_transformer = compose.make_column_transformer(
-            (preprocessing.OneHotEncoder(handle_unknown='ignore',
-                                         sparse=False), self.X_features_cat),
+            (preprocessing.OneHotEncoder(drop=None, sparse=False,
+                                         handle_unknown='ignore',
+                                         ), self.X_features_cat),
             remainder='passthrough')
 
         # Impute NaN values
@@ -120,14 +123,15 @@ class MetaModel:
 
         # Sequential feature selector method
         sfs = SFS(estimator=model, k_features='best', forward=True, floating=False,
-                  scoring='roc_auc', cv=self.cv, n_jobs=-1, verbose=2)
+                  scoring='roc_auc', cv=self.cv, n_jobs=-1, verbose=2,
+                  fixed_features=fixed_features)
 
         if feature_selection:
             self.clf = Pipeline(
                 steps=[("column_transformer", self.column_transformer),
                        ("simple_imputer", simple_imputer),
                        ("pca", pca),
-                       ("feature_selection", sfs)])
+                       ("sfs", sfs)])
         else:
             self.clf = Pipeline(
                 steps=[("column_transformer", self.column_transformer),
@@ -231,24 +235,37 @@ class MetaModel:
         TODO: Add early stopping when PR is merged on master"""
 
         self.setup_cross_validation(cv_n_splits, cv_gap)
-        self.feature_transform_pipeline(feature_selection=True)
 
         # Sort data by date before running CV
         data_to_cv = self.data.sort_index(level='date', ascending=True)
 
         # Fit model with sample weights passed
         sample_weight = data_to_cv[::cv_sample][self.sample_weight_col].abs().values
+        self.feature_transform_pipeline(feature_selection=False)
         self.clf.fit(
             X=data_to_cv[::cv_sample][self.X_features],
             y=data_to_cv[::cv_sample][self.y_true_col],
-            feature_selection__sample_weight=sample_weight
+            classifier__sample_weight=sample_weight
         )
 
         column_transformer = self.clf.named_steps['column_transformer']
         self.X_transformed_features = column_transformer.get_feature_names_out()
 
+        # Identify indices of categorical features
+        features = enumerate(self.X_transformed_features)
+        fixed_features = tuple(i for (i, j) in features if 'onehotencoder__' in j)
+
+        # Re-fit passing fixed_features param
+        print(fixed_features)
+        print(len(self.X_train.columns))
+        self.feature_transform_pipeline(feature_selection=True, fixed_features=fixed_features)
+        self.clf.fit(self.X_train,
+                     self.y_train,
+                     sfs__sample_weight=self.sample_weight
+                     )
+
         self.most_important_features_idx = list(
-            self.clf.named_steps['feature_selection'].k_feature_idx_)
+            self.clf.named_steps['sfs'].k_feature_idx_)
 
         print('The top most important features are:')
         print(self.X_transformed_features[self.most_important_features_idx])
@@ -387,6 +404,7 @@ class MetaModel:
                             x_jitter=True,
                             y_jitter=True)
         g.axvline(x=0, color='r', linestyle='--', lw=2)
+        g.set(xlim=(-0.5, 0.5))
 
         return self
 
@@ -414,8 +432,6 @@ class MetaModel:
         temp_df = pd.concat(temp, axis=1)
         temp_df['precision_avg'] = temp_df['precision'].mean(axis=1)
         temp_df['recall_avg'] = temp_df['recall'].mean(axis=1)
-
-        temp_df
 
         return temp_df
 

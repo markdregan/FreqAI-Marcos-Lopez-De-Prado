@@ -26,11 +26,20 @@ def heikin_ashi(df):
     return heikin_ashi_df
 
 
-def add_ta_informative(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
+def add_all_ta_informative(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
     """Add TA features and rename columns"""
 
     df_ta = add_all_ta_features(df, open="open", high="high", low="low",
                                 close="close", volume="volume", fillna=False)
+
+    df_ta.columns = [x + suffix for x in df_ta.columns]
+
+    return df_ta
+
+
+def add_single_ta_informative(df: pd.DataFrame, ta_method, suffix: str, **kwargs) -> pd.DataFrame:
+
+    df_ta = df.apply(lambda x: ta_method(x, **kwargs) if 'date' not in x.name else x)
 
     df_ta.columns = [x + suffix for x in df_ta.columns]
 
