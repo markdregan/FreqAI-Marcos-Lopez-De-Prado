@@ -123,7 +123,7 @@ class MetaModel:
 
         # Sequential feature selector method
         sfs = SFS(estimator=model, k_features='best', forward=True, floating=False,
-                  scoring='roc_auc', cv=self.cv, n_jobs=-1, verbose=2,
+                  scoring='average_precision', cv=self.cv, n_jobs=-1, verbose=2,
                   fixed_features=fixed_features)
 
         if feature_selection:
@@ -256,8 +256,6 @@ class MetaModel:
         fixed_features = tuple(i for (i, j) in features if 'onehotencoder__' in j)
 
         # Re-fit passing fixed_features param
-        print(fixed_features)
-        print(len(self.X_train.columns))
         self.feature_transform_pipeline(feature_selection=True, fixed_features=fixed_features)
         self.clf.fit(self.X_train,
                      self.y_train,
@@ -277,7 +275,7 @@ class MetaModel:
         during feature selection process"""
 
         _ = plot_sfs(
-            self.clf.named_steps['feature_selection'].get_metric_dict(),
+            self.clf.named_steps['sfs'].get_metric_dict(),
             kind='ci',
             figsize=figsize)
 

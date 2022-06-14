@@ -1,9 +1,12 @@
 # Data download class for Glassnode. Originally written by Hugh. Adapted by Mark.
 
-import time
-import requests
+import datetime
 import pandas as pd
+import pangres
 import pathlib
+import requests
+import sqlalchemy
+import time
 
 # Patching pandas json bug described here: https://stackoverflow.com/a/61733123/17582153
 import json
@@ -13,12 +16,16 @@ pd.io.json._json.loads = lambda s, *a, **kw: json.loads(s)
 class GlassnodeData:
     """Get data from glassnode and store to csv locally"""
 
-    def __init__(self):
-        self.API_KEY = '22HCck9cUjuvUTrEvfc50rgcL7v'
-        self.DIR = pathlib.Path('user_data/data/glassnode/')
+    def __init__(self, api_key: str, directory: str):
+        self.API_KEY = api_key
+        self.DIR = pathlib.Path(directory)
 
-    def get_endpoints(self, metric_path: str = None, token: list[str] = None,
-                      resolution: str = None):
+        # Initialize sqlite database
+        connection_string = "sqlite:///litmus_external_signals.sqlite"
+        self.db_engine = sqlalchemy.create_engine(connection_string)
+
+    def get_endpoints(self, metric_path: list[str] = None, token: list[str] = None,
+                      resolution: list[str] = None):
         """Get available endpoints for Glassnode API"""
 
         ep = requests.get('https://api.glassnode.com/v2/metrics/endpoints',
@@ -38,13 +45,15 @@ class GlassnodeData:
         self.ep_df = pd.DataFrame(rows)
 
         if metric_path is not None:
-            self.ep_df = self.ep_df.loc[self.ep_df['path'] == metric_path]
+            self.ep_df = self.ep_df.loc[self.ep_df['path'].isin(metric_path)]
 
         if token is not None:
             self.ep_df = self.ep_df.loc[self.ep_df['token'].isin(token)]
 
         if resolution is not None:
-            self.ep_df = self.ep_df.loc[self.ep_df['resolution'] == resolution]
+            self.ep_df = self.ep_df.loc[self.ep_df['resolution'].isin(resolution)]
+
+        print("Got available endpoints from Glassnode")
 
         return self.ep_df
 
@@ -53,12 +62,15 @@ class GlassnodeData:
 
         while True:
             # Call Glassnode API and get result
-            self.res = requests.get("https://api.glassnode.com{}".format(path),
-                                    params={'a': token,
-                                            'i': resolution,
-                                            'api_key': self.API_KEY,
-                                            's': 0,
-                                            'u': int(time.time())})
+            print(f"Requesting data from Glassnode for {path}, {token}, {resolution}")
+            params = {'a': token,
+                      'i': resolution,
+                      'api_key': self.API_KEY,
+                      's': 1420074000,  # 2015
+                      'u': int(time.time())}
+            self.res = requests.get(
+                "https://api.glassnode.com{}".format(path), params)  # type: ignore
+
             # Check if rate limiting kicked in, sleep if so
             if self.res.status_code == 429:
                 print(f"Status {self.res.status_code}. Pausing for 60 seconds...")
@@ -69,13 +81,19 @@ class GlassnodeData:
                 try:
                     metric_df = pd.read_json(self.res.text, convert_dates=['t'])
                     metric_df['t'] = pd.to_datetime(metric_df['t'], utc=True)
-                    colname = f"gn_{path.replace('/', '_')}_{resolution}"
+                    metric_df['token'] = token
+                    # Cast to str to avoid sqlite int too big error
+                    if 'v' in metric_df.columns:
+                        metric_df['v'] = metric_df['v'].astype(str)
+                    colname = f"gn_{resolution}_{path.replace('/', '_')}"
                     metric_df.rename({'v': colname,
                                       't': 'date'}, axis='columns', inplace=True)
-                    metric_df.set_index('date', inplace=True)
+                    metric_df.set_index(['token', 'date'], inplace=True)
                     if 'o' in metric_df.columns:
                         ix = metric_df.index
                         metric_df = pd.json_normalize(metric_df['o'])
+                        # Cast to str to avoid sqlite int too big error
+                        metric_df = metric_df.astype(str)
                         metric_df.set_index(ix, inplace=True)
                     return metric_df
 
@@ -87,7 +105,8 @@ class GlassnodeData:
                 print(f'Error: Request for {path} for {token}: {self.res.text}')
                 return None
 
-    def get_metrics(self, metric_path: str = None, token: list[str] = None, resolution: str = None):
+    def get_metrics(self, metric_path: list[str] = None, token: list[str] = None,
+                    resolution: list[str] = None):
         """Download data for multiple metrics for a given token."""
 
         metric_df = self.get_endpoints(metric_path, token, resolution)
@@ -97,17 +116,33 @@ class GlassnodeData:
             try:
                 df = self.get_metric(metric['path'], metric['token'], metric['resolution'])
                 if df is not None:
-                    filename = f"gn_{metric['path'].replace('/', '_')}_{metric['resolution']}.csv"
-                    dirpath = pathlib.Path(self.DIR, metric['token'], metric['resolution'])
-                    dirpath.mkdir(parents=True, exist_ok=True)
-                    filepath = pathlib.Path(dirpath, filename)
-                    df.to_csv(filepath)
-                    print(f'Data saved as {filename} in {dirpath}')
+                    metric_name = f"gn_{metric['resolution']}_{metric['path'].replace('/', '_')}"
+                    df['update_timestamp'] = datetime.datetime.utcnow()
+                    self.save_to_db(df, metric_name)
 
                 elif df is None:
                     print(f"Error: Empty results returned for {metric['path']}")
 
-            except ValueError:
-                print(f"Issue getting {metric['path']} for {metric['token']}")
+            except Exception as e:
+                print(f"Issue getting {metric['path']} for {metric['token']}: {e}")
 
         print('Process complete...')
+
+    def save_to_db(self, df, table_name):
+        """Save datafrmae to splite database"""
+
+        try:
+            pangres.upsert(con=self.db_engine, df=df, table_name=table_name, if_row_exists='update',
+                           chunksize=1000, create_table=True)
+            print(f"Successfully saved {table_name} to database")
+        except Exception as e:
+            print(f"Error saving {table_name} to database: {e}")
+
+        return self
+
+    def query_db(self, sql, path):
+        """Execute SQL query and see results"""
+
+        df = pd.read_sql(sql=sql, con=self.db_engine)
+
+        return df
