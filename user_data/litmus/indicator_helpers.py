@@ -37,9 +37,10 @@ def add_all_ta_informative(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
     return df_ta
 
 
-def add_single_ta_informative(df: pd.DataFrame, ta_method, suffix: str, **kwargs) -> pd.DataFrame:
+def add_single_ta_informative(df: pd.DataFrame, ta_method, suffix: str, col: str,
+                              **kwargs) -> pd.DataFrame:
 
-    df_ta = df.apply(lambda x: ta_method(x, **kwargs) if 'date' not in x.name else x)
+    df_ta = df.apply(lambda x: ta_method(x, **kwargs) if x.name == col else x)
 
     df_ta.columns = [x + suffix for x in df_ta.columns]
 

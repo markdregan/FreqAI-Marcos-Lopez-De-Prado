@@ -2,18 +2,21 @@
 # Tradingview: https://www.tradingview.com/chart/WeEVLg4V/
 # Author: markdregan@gmail.com
 
+from collections import defaultdict
 from freqtrade.exchange import timeframe_to_prev_date
 from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy, merge_informative_pair
-import numpy as np
 from pandas import DataFrame
-from user_data.litmus import indicator_helpers, external_informative_data as eid
+from user_data.litmus import indicator_helpers
+from user_data.litmus.glassnode import download_data
 
 import freqtrade.vendor.qtpylib.indicators as qtpylib
+import numpy as np
 import ta.momentum
 
 # Prevent pandas complaining with future warning errors
 import warnings
+
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 master_plot_config = {
@@ -47,7 +50,6 @@ master_plot_config = {
 
 
 class KamaPrimary(IStrategy):
-
     INTERFACE_VERSION = 3
 
     timeframe = "5m"
@@ -85,12 +87,48 @@ class KamaPrimary(IStrategy):
 
         return informative_pairs
 
-    def bot_loop_start(self, **kwargs) -> None:
+    def bot_start(self, **kwargs) -> None:
+        """Instantiate things before bot starts"""
 
-        # Informative: Glassnode 1d
-        glassnode_df = eid.load_local_data('glassnode_BTC_1d.csv', 'glassnode')
-        self.dataframe_glassnode_1d = indicator_helpers.add_single_ta_informative(
-            glassnode_df, ta.momentum.ppo, suffix='_ppo')
+        # Glassnode class for fetching data from glassnode and sqlite db
+        self.gn = download_data.GlassnodeData(api_key='22HCck9cUjuvUTrEvfc50rgcL7v',
+                                              directory='user_data/data/glassnode/')
+
+        # List of glassnode features that are shared across collection of tokens
+        self.gn_f = ["gn_10m__v1_metrics_addresses_active_count",
+                     "gn_10m__v1_metrics_addresses_receiving_count",
+                     "gn_10m__v1_metrics_indicators_nvt",
+                     "gn_10m__v1_metrics_indicators_nvts",
+                     "gn_10m__v1_metrics_addresses_count",
+                     "gn_10m__v1_metrics_indicators_velocity",
+                     "gn_10m__v1_metrics_market_marketcap_usd",
+                     "gn_10m__v1_metrics_market_price_drawdown_relative",
+                     "gn_10m__v1_metrics_market_price_usd",
+                     "gn_10m__v1_metrics_market_price_usd_close",
+                     "gn_10m__v1_metrics_supply_current",
+                     "gn_10m__v1_metrics_addresses_sending_count",
+                     "gn_10m__v1_metrics_addresses_new_non_zero_count",
+                     "gn_10m__v1_metrics_transactions_transfers_volume_mean",
+                     "gn_10m__v1_metrics_transactions_transfers_volume_median",
+                     "gn_10m__v1_metrics_transactions_transfers_volume_sum",
+                     "gn_10m__v1_metrics_transactions_transfers_volume_between_exchanges_sum",
+                     "gn_10m__v1_metrics_distribution_balance_exchanges",
+                     "gn_10m__v1_metrics_transactions_transfers_to_exchanges_count",
+                     "gn_10m__v1_metrics_transactions_transfers_from_exchanges_count",
+                     "gn_10m__v1_metrics_transactions_transfers_between_exchanges_count",
+                     "gn_10m__v1_metrics_transactions_transfers_volume_exchanges_net",
+                     "gn_10m__v1_metrics_transactions_transfers_volume_from_exchanges_mean",
+                     "gn_10m__v1_metrics_transactions_transfers_volume_from_exchanges_sum",
+                     "gn_10m__v1_metrics_transactions_transfers_volume_to_exchanges_mean",
+                     "gn_10m__v1_metrics_transactions_transfers_volume_to_exchanges_sum",
+                     "gn_10m__v1_metrics_distribution_balance_exchanges_relative",
+                     "gn_10m__v1_metrics_transactions_transfers_volume_within_exchanges_sum",
+                     "gn_10m__v1_metrics_addresses_sending_to_exchanges_count",
+                     "gn_10m__v1_metrics_addresses_receiving_from_exchanges_count",
+                     "gn_10m__v1_metrics_transactions_transfers_count",
+                     "gn_10m__v1_metrics_transactions_transfers_rate"]
+
+    def bot_loop_start(self, **kwargs) -> None:
 
         # Informative: BTC 5m
         self.dataframe_btc_5m = self.dp.get_pair_dataframe(pair='BTC/USDT', timeframe='5m')
@@ -105,11 +143,23 @@ class KamaPrimary(IStrategy):
     def populate_indicators(self, dataframe: DataFrame,
                             metadata: dict) -> DataFrame:
 
-        # Apply TA indicators to the pair dataframe
+        # Apply TA indicators to the pair being traded
         dataframe = indicator_helpers.add_all_ta_informative(
             dataframe, suffix='')
 
-        # Informative signals of pair at lower time resolution
+        # Get glassnode signals & derive TA indicators
+        token = metadata['pair'].split('/')[0]
+        gn_data = defaultdict(dict)  # type: ignore
+        for i, f in enumerate(self.gn_f):
+            SUFFIX = '_ppo_' + str(i)
+            gn_data[f]['df'] = self.gn.query_metric(table_name=f, token=token,
+                                                    date_from='2021-06-01', date_to='2022-04-01',
+                                                    cols_to_drop=['token', 'update_timestamp'])
+            gn_data[f]['ta_df'] = indicator_helpers.add_single_ta_informative(
+                gn_data[f]['df'], ta.momentum.ppo, suffix=SUFFIX, col=f)
+            gn_data[f]['date_key'] = 'date' + SUFFIX
+
+        # Add informative signals of pair at lower time resolution
         low_res_tf = '1h'
         dataframe_low_res = self.dp.get_pair_dataframe(
             pair=metadata['pair'], timeframe=low_res_tf)
@@ -139,20 +189,28 @@ class KamaPrimary(IStrategy):
             (dataframe['kama_delta'] < dataframe['kama_exit_threshold']), 1, 0)
 
         # Merge informative pairs
-        # Note: `.copy` needed to avoid `date` column being removed during merge which means column
+        # Note: For dataframes fetched in `bot_loop_start`, `.copy` is needed to avoid `date`
+        # column being removed during merge which results in column
         # not available for joining for subsequent pairs
+
+        # BTC price signals
         dataframe = merge_informative_pair(
-            dataframe, self.dataframe_btc_5m.copy(), self.timeframe,
-            '5m', ffill=True, date_column='date_btc')
+            dataframe=dataframe, informative=self.dataframe_btc_5m.copy(), timeframe=self.timeframe,
+            timeframe_inf='5m', ffill=True, date_column='date_btc')
         dataframe = merge_informative_pair(
-            dataframe, self.dataframe_btc_1h.copy(), self.timeframe,
-            '1h', ffill=True, date_column='date_btc')
+            dataframe=dataframe, informative=self.dataframe_btc_1h.copy(), timeframe=self.timeframe,
+            timeframe_inf='1h', ffill=True, date_column='date_btc')
+
+        # Lower res pair price signals
         dataframe = merge_informative_pair(
-            dataframe, self.dataframe_glassnode_1d.copy(), self.timeframe,
-            '1d', ffill=True, date_column='date_ppo')
-        dataframe = merge_informative_pair(
-            dataframe, dataframe_low_res, self.timeframe,
-            '1h', ffill=True, date_column='date')
+            dataframe=dataframe, informative=dataframe_low_res, timeframe=self.timeframe,
+            timeframe_inf='1h', ffill=True, date_column='date')
+
+        # Merge all glassnode signals
+        for f in gn_data.keys():
+            dataframe = merge_informative_pair(
+                dataframe=dataframe, informative=gn_data[f]['ta_df'], timeframe=self.timeframe,
+                timeframe_inf='10m', ffill=True, date_column=gn_data[f]['date_key'])
 
         # Add reference to pair so ML model can generate feature for prediction
         dataframe['pair_copy'] = metadata['pair']

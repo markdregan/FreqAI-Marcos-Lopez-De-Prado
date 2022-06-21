@@ -78,6 +78,7 @@ class GlassnodeData:
 
             elif self.res.status_code == 200:
                 # Get metric data and save to csv
+                print("Successful request 200")
                 try:
                     metric_df = pd.read_json(self.res.text, convert_dates=['t'])
                     metric_df['t'] = pd.to_datetime(metric_df['t'], utc=True)
@@ -140,9 +141,36 @@ class GlassnodeData:
 
         return self
 
-    def query_db(self, sql, path):
+    def query_metric(self, table_name, token: str, date_from: str = None,
+                     date_to: str = None, cols_to_drop: list = None):
         """Execute SQL query and see results"""
 
-        df = pd.read_sql(sql=sql, con=self.db_engine)
+        base_query = f"SELECT * FROM {table_name}"
+        token_filter = f"WHERE token = '{token}'"
+
+        if date_from is not None:
+            date_from_filter = f"AND date >= '{date_from}'"
+        else:
+            date_from_filter = ""
+
+        if date_to is not None:
+            date_to_filter = f"AND date <= '{date_to}'"
+        else:
+            date_to_filter = ""
+
+        sql_query = " ".join([base_query, token_filter, date_from_filter, date_to_filter])
+        df = pd.read_sql(sql=sql_query, con=self.db_engine)
+        df['date'] = pd.to_datetime(df['date'], utc=True)
+
+        # Drop cols not required
+        if cols_to_drop is not None:
+            df.drop(columns=cols_to_drop, inplace=True)
+
+        cols_to_skip = ['date', 'token', 'update_timestamp']
+        cols = [c for c in df.columns if c not in cols_to_skip]
+        df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
+
+        # Forward Fill to address NaNs
+        df[cols] = df[cols].ffill()
 
         return df
