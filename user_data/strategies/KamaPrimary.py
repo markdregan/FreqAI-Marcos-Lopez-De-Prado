@@ -11,6 +11,7 @@ from user_data.litmus import indicator_helpers
 from user_data.litmus.glassnode import download_data
 
 import freqtrade.vendor.qtpylib.indicators as qtpylib
+import gc
 import numpy as np
 import ta.momentum
 
@@ -153,7 +154,7 @@ class KamaPrimary(IStrategy):
         for i, f in enumerate(self.gn_f):
             SUFFIX = '_ppo_' + str(i)
             gn_data[f]['df'] = self.gn.query_metric(table_name=f, token=token,
-                                                    date_from='2021-06-01', date_to='2022-04-01',
+                                                    date_from='2021-06-01', date_to='2022-07-01',
                                                     cols_to_drop=['token', 'update_timestamp'])
             gn_data[f]['ta_df'] = indicator_helpers.add_single_ta_informative(
                 gn_data[f]['df'], ta.momentum.ppo, suffix=SUFFIX, col=f)
@@ -211,6 +212,11 @@ class KamaPrimary(IStrategy):
             dataframe = merge_informative_pair(
                 dataframe=dataframe, informative=gn_data[f]['ta_df'], timeframe=self.timeframe,
                 timeframe_inf='10m', ffill=True, date_column=gn_data[f]['date_key'])
+
+        # Free up memory by deleting big objects and triggering garbage collection
+        del gn_data
+        del dataframe_low_res
+        gc.collect()
 
         # Add reference to pair so ML model can generate feature for prediction
         dataframe['pair_copy'] = metadata['pair']

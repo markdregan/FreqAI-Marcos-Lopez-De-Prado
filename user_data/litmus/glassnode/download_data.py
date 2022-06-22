@@ -1,6 +1,7 @@
 # Data download class for Glassnode. Originally written by Hugh. Adapted by Mark.
 
 import datetime
+import logging
 import pandas as pd
 import pangres
 import pathlib
@@ -11,6 +12,14 @@ import time
 # Patching pandas json bug described here: https://stackoverflow.com/a/61733123/17582153
 import json
 pd.io.json._json.loads = lambda s, *a, **kw: json.loads(s)
+
+# Setup logging config
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+logger.addHandler(stream_handler)
 
 
 class GlassnodeData:
@@ -26,7 +35,7 @@ class GlassnodeData:
 
     def get_endpoints(self, metric_path: list[str] = None, token: list[str] = None,
                       resolution: list[str] = None):
-        """Get available endpoints for Glassnode API"""
+        """Get available endpoints (metrics) for Glassnode API"""
 
         ep = requests.get('https://api.glassnode.com/v2/metrics/endpoints',
                           params={'api_key': self.API_KEY})
@@ -53,7 +62,7 @@ class GlassnodeData:
         if resolution is not None:
             self.ep_df = self.ep_df.loc[self.ep_df['resolution'].isin(resolution)]
 
-        print("Got available endpoints from Glassnode")
+        logger.info("Got available endpoints from Glassnode")
 
         return self.ep_df
 
@@ -62,7 +71,7 @@ class GlassnodeData:
 
         while True:
             # Call Glassnode API and get result
-            print(f"Requesting data from Glassnode for {path}, {token}, {resolution}")
+            logger.info(f"Requesting data from Glassnode for {path}, {token}, {resolution}")
             params = {'a': token,
                       'i': resolution,
                       'api_key': self.API_KEY,
@@ -78,7 +87,7 @@ class GlassnodeData:
 
             elif self.res.status_code == 200:
                 # Get metric data and save to csv
-                print("Successful request 200")
+                logger.info("Successful API request 200")
                 try:
                     metric_df = pd.read_json(self.res.text, convert_dates=['t'])
                     metric_df['t'] = pd.to_datetime(metric_df['t'], utc=True)
@@ -99,11 +108,11 @@ class GlassnodeData:
                     return metric_df
 
                 except Exception as e:
-                    print(f"Error thrown for {path} for {token}: {e}")
-                    print(f"Response text: {self.res.text}")
+                    logger.error(f"Error thrown for {path} for {token}: {e}")
+                    logger.error(f"Response text: {self.res.text}")
                     return None
             else:
-                print(f'Error: Request for {path} for {token}: {self.res.text}')
+                logger.warning(f'Error: Request for {path} for {token}: {self.res.text}')
                 return None
 
     def get_metrics(self, metric_path: list[str] = None, token: list[str] = None,
@@ -122,12 +131,12 @@ class GlassnodeData:
                     self.save_to_db(df, metric_name)
 
                 elif df is None:
-                    print(f"Error: Empty results returned for {metric['path']}")
+                    logger.warning(f"Error: Empty results returned for {metric['path']}")
 
             except Exception as e:
-                print(f"Issue getting {metric['path']} for {metric['token']}: {e}")
+                logger.error(f"Issue getting {metric['path']} for {metric['token']}: {e}")
 
-        print('Process complete...')
+        logger.info('Process complete...')
 
     def save_to_db(self, df, table_name):
         """Save datafrmae to splite database"""
@@ -135,14 +144,14 @@ class GlassnodeData:
         try:
             pangres.upsert(con=self.db_engine, df=df, table_name=table_name, if_row_exists='update',
                            chunksize=1000, create_table=True)
-            print(f"Successfully saved {table_name} to database")
+            logger.info(f"Successfully saved {table_name} to database")
         except Exception as e:
-            print(f"Error saving {table_name} to database: {e}")
+            logger.error(f"Error saving {table_name} to database: {e}")
 
         return self
 
     def query_metric(self, table_name, token: str, date_from: str = None,
-                     date_to: str = None, cols_to_drop: list = None):
+                     date_to: str = None, cols_to_drop: list = None, ffill: bool = False):
         """Execute SQL query and see results"""
 
         base_query = f"SELECT * FROM {table_name}"
@@ -160,6 +169,7 @@ class GlassnodeData:
 
         sql_query = " ".join([base_query, token_filter, date_from_filter, date_to_filter])
         df = pd.read_sql(sql=sql_query, con=self.db_engine)
+        logger.info("Executed SQL query")
         df['date'] = pd.to_datetime(df['date'], utc=True)
 
         # Drop cols not required
@@ -171,6 +181,7 @@ class GlassnodeData:
         df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
 
         # Forward Fill to address NaNs
-        df[cols] = df[cols].ffill()
+        if ffill is True:
+            df[cols] = df[cols].ffill()
 
         return df
