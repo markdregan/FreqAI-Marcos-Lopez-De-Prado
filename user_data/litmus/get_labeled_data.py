@@ -3,33 +3,23 @@
 #           from that strategy backtest. It then joins together and returns the DataFrame.
 # Author: markdregan@gmail.com
 
-from freqtrade.data.btanalysis import get_latest_backtest_filename
 from pathlib import Path
 
 import joblib
 import json
-import os
 import pandas as pd
 
 
 class GetLabeledData:
 
-    def __init__(self, timeframe: str, latest: bool, bt_filename: str = '',
+    def __init__(self, timeframe: str, bt_filename: str = '',
                  bt_pkl_filename: str = ''):
 
         self.bt_dir = Path('user_data', 'backtest_results')
         self.timeframe = timeframe
 
-        if latest:
-            self.latest_bt_filename = os.path.splitext(
-                get_latest_backtest_filename(self.bt_dir))[0] + '.json'
-            self.latest_bt_pkl_filename = os.path.splitext(
-                get_latest_backtest_filename(self.bt_dir))[0] + '_signals.pkl'
-            self.bt_filename = self.latest_bt_filename
-            self.bt_pkl_filename = self.latest_bt_pkl_filename
-        else:
-            self.bt_filename = bt_filename
-            self.bt_pkl_filename = bt_pkl_filename
+        self.bt_filename = bt_filename
+        self.bt_pkl_filename = bt_pkl_filename
 
     def get_signals(self) -> dict:
         """Load and unpickle file from backtest. Concat into one DataFrame"""

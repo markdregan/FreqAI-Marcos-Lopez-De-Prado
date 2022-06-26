@@ -10,44 +10,13 @@ from pandas import DataFrame
 from user_data.litmus import indicator_helpers
 from user_data.litmus.glassnode import download_data
 
-import freqtrade.vendor.qtpylib.indicators as qtpylib
 import gc
-import numpy as np
+import litmus_cusum as litmus
 import ta.momentum
 
 # Prevent pandas complaining with future warning errors
 import warnings
-
 warnings.simplefilter(action='ignore', category=FutureWarning)
-
-master_plot_config = {
-    "main_plot": {
-        "kama": {
-            "color": "purple"
-        },
-    },
-    "subplots": {
-        "KAMA": {
-            "kama_entry_threshold": {
-                "color": "green"
-            },
-            "kama_exit_threshold": {
-                "color": "red"
-            },
-            "kama_delta": {
-                "color": "purple"
-            },
-        },
-        "POS": {
-            "kama_entry_pos": {
-                "color": "green"
-            },
-            "kama_exit_pos": {
-                "color": "red"
-            },
-        },
-    },
-}
 
 
 class KamaPrimary(IStrategy):
@@ -67,11 +36,14 @@ class KamaPrimary(IStrategy):
     # Turn on position adjustment
     position_adjustment_enable = False
 
-    # Plotting config
-    plot_config = master_plot_config
-
     # Number of candles the strategy requires before producing valid signals
     startup_candle_count = 100
+
+    @property
+    def plot_config(self):
+        """Define plot config for strategy"""
+
+        return litmus.plot_config()
 
     def informative_pairs(self):
 
@@ -154,7 +126,7 @@ class KamaPrimary(IStrategy):
         for i, f in enumerate(self.gn_f):
             SUFFIX = '_ppo_' + str(i)
             gn_data[f]['df'] = self.gn.query_metric(table_name=f, token=token,
-                                                    date_from='2021-06-01', date_to='2022-07-01',
+                                                    date_from='2021-01-01', date_to='2022-04-01',
                                                     cols_to_drop=['token', 'update_timestamp'])
             gn_data[f]['ta_df'] = indicator_helpers.add_single_ta_informative(
                 gn_data[f]['df'], ta.momentum.ppo, suffix=SUFFIX, col=f)
@@ -167,27 +139,8 @@ class KamaPrimary(IStrategy):
         dataframe_low_res = indicator_helpers.add_all_ta_informative(
             dataframe_low_res, suffix='')
 
-        # KAMA
-        kama_window = 14
-        dataframe['kama'] = ta.momentum.kama(
-            dataframe['close'], window=kama_window, pow1=2, pow2=20)
-        dataframe['kama_delta'] = dataframe['kama'] - dataframe['kama'].shift(1)
-
-        # Entry/Exit dynamic threshold
-        kama_entry_coeff = 1
-        kamma_exit_coeff = -0.5
-        dataframe['kama_threshold'] = dataframe['kama_delta'].rolling(window=kama_window).std()
-        dataframe['kama_entry_threshold'] = dataframe['kama_threshold'] * kama_entry_coeff
-        dataframe['kama_exit_threshold'] = dataframe['kama_threshold'] * kamma_exit_coeff
-
-        # Entry & Exit
-        dataframe['kama_entry_pos'] = np.where(
-            (dataframe['kama_delta'] > 0) &
-            (dataframe['kama_delta'] > dataframe['kama_entry_threshold']), 1, 0)
-
-        dataframe['kama_exit_pos'] = np.where(
-            (dataframe['kama_delta'] < 0) &
-            (dataframe['kama_delta'] < dataframe['kama_exit_threshold']), 1, 0)
+        # Add features/columns from imported litmus strategy
+        dataframe = litmus.populate_indicators(dataframe)
 
         # Merge informative pairs
         # Note: For dataframes fetched in `bot_loop_start`, `.copy` is needed to avoid `date`
@@ -214,6 +167,7 @@ class KamaPrimary(IStrategy):
                 timeframe_inf='10m', ffill=True, date_column=gn_data[f]['date_key'])
 
         # Free up memory by deleting big objects and triggering garbage collection
+        # Not sure if this makes any difference
         del gn_data
         del dataframe_low_res
         gc.collect()
@@ -232,10 +186,7 @@ class KamaPrimary(IStrategy):
             return: DataFrame with buy column
         """
 
-        dataframe.loc[
-            (qtpylib.crossed_above(dataframe['kama_entry_pos'], 0.5))
-            & (dataframe['volume'] > 0),
-            ['enter_long', 'enter_tag']] = (1, 'enter_long_trigger')
+        dataframe = litmus.populate_entry_trend(dataframe)
 
         return dataframe
 
@@ -263,7 +214,7 @@ class KamaPrimary(IStrategy):
         """
 
         # Sell any positions at a loss if they are held for more than X seconds.
-        vertical_barrier_seconds = 4 * 60 * 60
+        vertical_barrier_seconds = 6 * 60 * 60
         if (current_time - trade.open_date_utc).seconds > vertical_barrier_seconds:
             return 'vertical_barrier_force_sell'
 
@@ -274,7 +225,7 @@ class KamaPrimary(IStrategy):
         # Upper / lower barrier multiplier
         # Does NOT need to be symmetric
         PT_MULTIPLIER = 1.02
-        SL_MULTIPLIER = 0.96
+        SL_MULTIPLIER = 0.98
 
         # Look up original candle on the trade date
         trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)

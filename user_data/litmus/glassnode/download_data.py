@@ -169,7 +169,7 @@ class GlassnodeData:
 
         sql_query = " ".join([base_query, token_filter, date_from_filter, date_to_filter])
         df = pd.read_sql(sql=sql_query, con=self.db_engine)
-        logger.info("Executed SQL query")
+        logger.info(f"Executed SQL query on {table_name}")
         df['date'] = pd.to_datetime(df['date'], utc=True)
 
         # Drop cols not required
