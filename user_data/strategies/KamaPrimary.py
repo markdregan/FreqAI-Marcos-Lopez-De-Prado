@@ -3,14 +3,15 @@
 # Author: markdregan@gmail.com
 
 from collections import defaultdict
-from freqtrade.exchange import timeframe_to_prev_date
+
+import pandas as pd
+
 from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy, merge_informative_pair
 from pandas import DataFrame
 from user_data.litmus import indicator_helpers
 from user_data.litmus.glassnode import download_data
 
-import gc
 import litmus_cusum as litmus
 import ta.momentum
 
@@ -101,17 +102,192 @@ class KamaPrimary(IStrategy):
                      "gn_10m__v1_metrics_transactions_transfers_count",
                      "gn_10m__v1_metrics_transactions_transfers_rate"]
 
+        self.gn_btc_f = [
+            'gn_10m__v1_metrics_blockchain_block_interval_median',
+            'gn_10m__v1_metrics_market_marketcap_realized_usd',
+            'gn_10m__v1_metrics_market_mvrv_z_score',
+            'gn_10m__v1_metrics_market_mvrv',
+            'gn_10m__v1_metrics_blockchain_block_interval_mean',
+            'gn_10m__v1_metrics_transactions_count',
+            'gn_10m__v1_metrics_blockchain_block_height',
+            'gn_10m__v1_metrics_blockchain_block_size_mean',
+            'gn_10m__v1_metrics_fees_fee_ratio_multiple',
+            'gn_10m__v1_metrics_fees_volume_mean',
+            'gn_10m__v1_metrics_fees_volume_median',
+            'gn_10m__v1_metrics_fees_volume_sum',
+            'gn_10m__v1_metrics_market_price_realized_usd',
+            'gn_10m__v1_metrics_blockchain_block_count',
+            'gn_10m__v1_metrics_blockchain_block_size_sum',
+            'gn_10m__v1_metrics_transactions_rate',
+            'gn_10m__v1_metrics_supply_revived_more_5y_sum',
+            'gn_10m__v1_metrics_indicators_svl_1w_1m',
+            'gn_10m__v1_metrics_addresses_min_point_1_count',
+            'gn_10m__v1_metrics_addresses_min_1k_count',
+            'gn_10m__v1_metrics_indicators_svl_3y_5y',
+            'gn_10m__v1_metrics_indicators_svl_3m_6m',
+            'gn_10m__v1_metrics_addresses_min_1_count',
+            'gn_10m__v1_metrics_addresses_min_10k_count',
+            'gn_10m__v1_metrics_indicators_svl_1y_2y',
+            'gn_10m__v1_metrics_indicators_svl_1m_3m',
+            'gn_10m__v1_metrics_indicators_svl_6m_12m',
+            'gn_10m__v1_metrics_indicators_svl_1h_24h',
+            'gn_10m__v1_metrics_indicators_svl_1h',
+            'gn_10m__v1_metrics_indicators_svl_1d_1w',
+            'gn_10m__v1_metrics_addresses_supply_balance_less_0001',
+            'gn_10m__v1_metrics_addresses_min_10_count',
+            'gn_10m__v1_metrics_addresses_min_100_count',
+            'gn_10m__v1_metrics_addresses_supply_balance_more_100k',
+            'gn_10m__v1_metrics_indicators_svl_5y_7y',
+            'gn_10m__v1_metrics_indicators_svl_7y_10y',
+            'gn_10m__v1_metrics_supply_revived_more_3y_sum',
+            'gn_10m__v1_metrics_mining_difficulty_latest',
+            'gn_10m__v1_metrics_supply_revived_more_2y_sum',
+            'gn_10m__v1_metrics_supply_revived_more_1y_sum',
+            'gn_10m__v1_metrics_supply_issued',
+            'gn_10m__v1_metrics_addresses_supply_balance_01_1',
+            'gn_10m__v1_metrics_mining_revenue_from_fees',
+            'gn_10m__v1_metrics_mining_hash_rate_mean',
+            'gn_10m__v1_metrics_mining_difficulty_mean',
+            'gn_10m__v1_metrics_addresses_supply_balance_100_1k',
+            'gn_10m__v1_metrics_indicators_svl_more_10y',
+            'gn_10m__v1_metrics_indicators_cdd_supply_adjusted_binary',
+            'gn_10m__v1_metrics_addresses_supply_balance_10k_100k',
+            'gn_10m__v1_metrics_addresses_supply_balance_001_01',
+            'gn_10m__v1_metrics_addresses_supply_balance_0001_001',
+            'gn_10m__v1_metrics_addresses_supply_balance_1_10',
+            'gn_10m__v1_metrics_addresses_min_point_zero_1_count',
+            'gn_10m__v1_metrics_addresses_supply_balance_1k_10k',
+            'gn_10m__v1_metrics_addresses_supply_balance_10_100',
+            'gn_10m__v1_metrics_indicators_svl_2y_3y',
+            'gn_10m__v1_metrics_indicators_cdd_supply_adjusted',
+            'gn_10m__v1_metrics_derivatives_futures_funding_rate_perpetual',
+            'gn_10m__v1_metrics_derivatives_futures_open_interest_crypto_margin_sum',
+            'gn_10m__v1_metrics_derivatives_futures_annualized_basis_3m',
+            'gn_10m__v1_metrics_derivatives_options_atm_implied_volatility_6_months',
+            'gn_10m__v1_metrics_derivatives_options_atm_implied_volatility_3_months',
+            'gn_10m__v1_metrics_derivatives_options_atm_implied_volatility_1_week',
+            'gn_10m__v1_metrics_derivatives_options_atm_implied_volatility_1_month',
+            'gn_10m__v1_metrics_derivatives_options_25delta_skew_all',
+            'gn_10m__v1_metrics_derivatives_options_25delta_skew_6_months',
+            'gn_10m__v1_metrics_derivatives_options_25delta_skew_3_months',
+            'gn_10m__v1_metrics_derivatives_options_25delta_skew_1_week',
+            'gn_10m__v1_metrics_derivatives_futures_estimated_leverage_ratio',
+            'gn_10m__v1_metrics_derivatives_futures_liquidated_volume_long_mean',
+            'gn_10m__v1_metrics_derivatives_options_open_interest_put_call_ratio',
+            'gn_10m__v1_metrics_derivatives_futures_liquidated_volume_long_relative',
+            'gn_10m__v1_metrics_derivatives_futures_liquidated_volume_long_sum',
+            'gn_10m__v1_metrics_derivatives_futures_liquidated_volume_short_mean',
+            'gn_10m__v1_metrics_indicators_average_dormancy_supply_adjusted',
+            'gn_10m__v1_metrics_derivatives_options_25delta_skew_1_month',
+            'gn_10m__v1_metrics_derivatives_futures_volume_daily_sum',
+            'gn_10m__v1_metrics_derivatives_futures_volume_daily_perpetual_sum',
+            'gn_10m__v1_metrics_derivatives_futures_liquidated_volume_short_sum',
+            'gn_10m__v1_metrics_derivatives_futures_open_interest_cash_margin_sum',
+            'gn_10m__v1_metrics_derivatives_futures_open_interest_sum',
+            'gn_10m__v1_metrics_derivatives_futures_open_interest_crypto_margin_relative',
+            'gn_10m__v1_metrics_derivatives_options_atm_implied_volatility_all',
+            'gn_10m__v1_metrics_blockchain_utxo_spent_value_sum',
+            'gn_10m__v1_metrics_derivatives_options_open_interest_sum',
+            'gn_10m__v1_metrics_blockchain_utxo_spent_value_median',
+            'gn_10m__v1_metrics_blockchain_utxo_count',
+            'gn_10m__v1_metrics_blockchain_utxo_created_count',
+            'gn_10m__v1_metrics_blockchain_utxo_created_value_mean',
+            'gn_10m__v1_metrics_blockchain_utxo_created_value_median',
+            'gn_10m__v1_metrics_blockchain_utxo_created_value_sum',
+            'gn_10m__v1_metrics_blockchain_utxo_spent_count',
+            'gn_10m__v1_metrics_blockchain_utxo_spent_value_mean',
+            'gn_10m__v1_metrics_derivatives_futures_open_interest_perpetual_sum',
+            'gn_10m__v1_metrics_derivatives_options_volume_daily_sum',
+            'gn_10m__v1_metrics_derivatives_options_volume_put_call_ratio',
+            'gn_10m__v1_metrics_transactions_transfers_volume_adjusted_sum',
+            'gn_10m__v1_metrics_transactions_transfers_to_otc_desks_count',
+            'gn_10m__v1_metrics_supply_minted',
+            'gn_10m__v1_metrics_transactions_transfers_volume_to_otc_desks_sum',
+            'gn_10m__v1_metrics_transactions_transfers_volume_to_miners_sum',
+            'gn_10m__v1_metrics_transactions_transfers_from_otc_desks_count',
+            'gn_10m__v1_metrics_transactions_transfers_volume_miners_to_exchanges',
+            'gn_10m__v1_metrics_transactions_transfers_volume_miners_net',
+            'gn_10m__v1_metrics_transactions_transfers_from_miners_count',
+            'gn_10m__v1_metrics_transactions_transfers_volume_from_otc_desks_sum',
+            'gn_10m__v1_metrics_transactions_transfers_volume_entity_adjusted_mean',
+            'gn_10m__v1_metrics_transactions_entity_adjusted_count',
+            'gn_10m__v1_metrics_transactions_transfers_volume_from_miners_sum',
+            'gn_10m__v1_metrics_transactions_size_mean',
+            'gn_10m__v1_metrics_transactions_size_sum',
+            'gn_10m__v1_metrics_transactions_transfers_to_miners_count',
+            'gn_10m__v1_metrics_transactions_transfers_volume_adjusted_mean',
+            'gn_10m__v1_metrics_transactions_transfers_volume_adjusted_median',
+            'gn_10m__v1_metrics_transactions_transfers_volume_entity_adjusted_sum',
+            'gn_10m__v1_metrics_transactions_transfers_volume_entity_adjusted_median',
+            'gn_10m__v1_metrics_addresses_min_32_count',
+            'gn_10m__v1_metrics_mempool_txs_value_sum',
+            'gn_10m__v1_metrics_supply_burned',
+            'gn_10m__v1_metrics_fees_gas_limit_tx_mean',
+            'gn_10m__v1_metrics_fees_gas_price_mean',
+            'gn_10m__v1_metrics_fees_gas_price_median',
+            'gn_10m__v1_metrics_fees_gas_used_mean',
+            'gn_10m__v1_metrics_fees_gas_used_median',
+            'gn_10m__v1_metrics_indicators_sol_more_10y',
+            'gn_10m__v1_metrics_indicators_sol_7y_10y',
+            'gn_10m__v1_metrics_indicators_sol_6m_12m',
+            'gn_10m__v1_metrics_indicators_sol_5y_7y',
+            'gn_10m__v1_metrics_indicators_sol_3y_5y',
+            'gn_10m__v1_metrics_indicators_sol_3m_6m',
+            'gn_10m__v1_metrics_indicators_sol_2y_3y',
+            'gn_10m__v1_metrics_fees_gas_used_sum',
+            'gn_10m__v1_metrics_indicators_sol_1w_1m',
+            'gn_10m__v1_metrics_indicators_sol_1m_3m',
+            'gn_10m__v1_metrics_indicators_sol_1h_24h',
+            'gn_10m__v1_metrics_indicators_sol_1h',
+            'gn_10m__v1_metrics_indicators_sol_1d_1w',
+            'gn_10m__v1_metrics_fees_gas_limit_tx_median',
+            'gn_10m__v1_metrics_distribution_balance_wbtc',
+            'gn_10m__v1_metrics_mining_volume_mined_sum',
+            'gn_10m__v1_metrics_distribution_balance_mtgox_trustee',
+            'gn_10m__v1_metrics_mining_miners_unspent_supply',
+            'gn_10m__v1_metrics_mining_miners_outflow_multiple',
+            'gn_10m__v1_metrics_mempool_txs_value_distribution',
+            'gn_10m__v1_metrics_mempool_txs_size_sum',
+            'gn_10m__v1_metrics_mempool_txs_size_distribution',
+            'gn_10m__v1_metrics_mempool_txs_count_sum',
+            'gn_10m__v1_metrics_mempool_txs_count_distribution',
+            'gn_10m__v1_metrics_mempool_fees_sum',
+            'gn_10m__v1_metrics_mempool_fees_median_relative',
+            'gn_10m__v1_metrics_mempool_fees_distribution',
+            'gn_10m__v1_metrics_mempool_fees_average_relative',
+            'gn_10m__v1_metrics_lightning_nodes_count',
+            'gn_10m__v1_metrics_lightning_network_capacity_sum',
+            'gn_10m__v1_metrics_lightning_channels_count',
+            'gn_10m__v1_metrics_lightning_channel_size_median',
+            'gn_10m__v1_metrics_lightning_channel_size_mean',
+            'gn_10m__v1_metrics_distribution_balance_luna_foundation_guard',
+            'gn_10m__v1_metrics_indicators_sol_1y_2y']
+
     def bot_loop_start(self, **kwargs) -> None:
 
-        # Informative: BTC 5m
+        # Across Token Features: BTC 5m
         self.dataframe_btc_5m = self.dp.get_pair_dataframe(pair='BTC/USDT', timeframe='5m')
         self.dataframe_btc_5m = indicator_helpers.add_all_ta_informative(
             self.dataframe_btc_5m, suffix='_btc')
 
-        # Informative: BTC 1h
+        # Across Token Features: BTC 1h
         self.dataframe_btc_1h = self.dp.get_pair_dataframe(pair='BTC/USDT', timeframe='1h')
         self.dataframe_btc_1h = indicator_helpers.add_all_ta_informative(
             self.dataframe_btc_1h, suffix='_btc')
+
+        # Across Token Features: BTC Glassnode
+        gn_btc = []
+        for f in self.gn_btc_f:
+            SUFFIX = '_ppo'
+            f_df = self.gn.query_metric(table_name=f, token='BTC',
+                                        date_from='2021-01-01', date_to='2021-12-01',
+                                        cols_to_drop=['token', 'update_timestamp'])
+            f_df = indicator_helpers.add_single_ta_informative(
+                f_df, ta.momentum.ppo, suffix=SUFFIX, col=f)
+            f_df.set_index(keys='date' + SUFFIX, inplace=True)
+            gn_btc.append(f_df)
+        self.gn_btc_data = pd.concat(gn_btc, axis=1)
+        self.gn_btc_data.reset_index(inplace=True)
 
     def populate_indicators(self, dataframe: DataFrame,
                             metadata: dict) -> DataFrame:
@@ -124,9 +300,9 @@ class KamaPrimary(IStrategy):
         token = metadata['pair'].split('/')[0]
         gn_data = defaultdict(dict)  # type: ignore
         for i, f in enumerate(self.gn_f):
-            SUFFIX = '_ppo_' + str(i)
+            SUFFIX = '_ppo'
             gn_data[f]['df'] = self.gn.query_metric(table_name=f, token=token,
-                                                    date_from='2021-01-01', date_to='2022-04-01',
+                                                    date_from='2021-01-01', date_to='2021-12-01',
                                                     cols_to_drop=['token', 'update_timestamp'])
             gn_data[f]['ta_df'] = indicator_helpers.add_single_ta_informative(
                 gn_data[f]['df'], ta.momentum.ppo, suffix=SUFFIX, col=f)
@@ -160,17 +336,18 @@ class KamaPrimary(IStrategy):
             dataframe=dataframe, informative=dataframe_low_res, timeframe=self.timeframe,
             timeframe_inf='1h', ffill=True, date_column='date')
 
-        # Merge all glassnode signals
+        # Glassnode: Per token features
         for f in gn_data.keys():
             dataframe = merge_informative_pair(
                 dataframe=dataframe, informative=gn_data[f]['ta_df'], timeframe=self.timeframe,
                 timeframe_inf='10m', ffill=True, date_column=gn_data[f]['date_key'])
+            gn_data[f]['date_key'] += '_10m'
+            dataframe.drop(columns=gn_data[f]['date_key'], inplace=True)
 
-        # Free up memory by deleting big objects and triggering garbage collection
-        # Not sure if this makes any difference
-        del gn_data
-        del dataframe_low_res
-        gc.collect()
+        # Glassnode: Across token features (BTC)
+        dataframe = merge_informative_pair(
+            dataframe=dataframe, informative=self.gn_btc_data.copy(), timeframe=self.timeframe,
+            timeframe_inf='10m', ffill=True, date_column='date_ppo')
 
         # Add reference to pair so ML model can generate feature for prediction
         dataframe['pair_copy'] = metadata['pair']
@@ -218,29 +395,17 @@ class KamaPrimary(IStrategy):
         if (current_time - trade.open_date_utc).seconds > vertical_barrier_seconds:
             return 'vertical_barrier_force_sell'
 
-        # Triple Barrier Method: Upper and lower barriers based on EMA Daily Volatility
-        # Obtain pair dataframe
-        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-
-        # Upper / lower barrier multiplier
-        # Does NOT need to be symmetric
+        # Close trades when they exceed upper/lower barriers
+        trade_open_rate = trade.open_rate
         PT_MULTIPLIER = 1.02
         SL_MULTIPLIER = 0.98
 
-        # Look up original candle on the trade date
-        trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
-        trade_candle = dataframe.loc[dataframe['date'] == trade_date]
+        # Profit taking upper barrier sell trigger
+        if current_rate > trade_open_rate * PT_MULTIPLIER:
+            return 'upper_barrier_pt_sell'
 
-        # trade_candle may be empty for trades that just opened as it is still incomplete.
-        if not trade_candle.empty:
-            trade_candle = trade_candle.squeeze()
-
-            # Profit taking upper barrier sell trigger
-            if current_rate > trade_candle['open'] * PT_MULTIPLIER:
-                return 'upper_barrier_pt_sell'
-
-            # Stop loss lower barrier sell trigger
-            elif current_rate < trade_candle['open'] * SL_MULTIPLIER:
-                return 'lower_barrier_sl_sell'
+        # Stop loss lower barrier sell trigger
+        elif current_rate < trade_open_rate * SL_MULTIPLIER:
+            return 'lower_barrier_sl_sell'
 
         return None

@@ -55,7 +55,7 @@ def cusum_filter(df: pd.DataFrame, threshold_coeff: float) -> pd.DataFrame:
     # Daily volatility: 5mins x 288 = 1day
     df = daily_volatility(df, shift=288, lookback=50)
 
-    df['cusum_trigger'] = False
+    df['entry_trigger'] = False
     df['cusum_pos_threshold'] = df['daily_volatility'] * threshold_coeff
     df['cusum_neg_threshold'] = df['daily_volatility'] * threshold_coeff * -1
     df['cusum_s_neg'] = 0
@@ -78,11 +78,11 @@ def cusum_filter(df: pd.DataFrame, threshold_coeff: float) -> pd.DataFrame:
 
         if s_neg < df.loc[i, 'cusum_neg_threshold']:
             s_neg = 0
-            df.loc[i, 'cusum_trigger'] = True
+            df.loc[i, 'entry_trigger'] = True
 
         elif s_pos > df.loc[i, 'cusum_pos_threshold']:
             s_pos = 0
-            df.loc[i, 'cusum_trigger'] = True
+            df.loc[i, 'entry_trigger'] = True
 
     return df
 

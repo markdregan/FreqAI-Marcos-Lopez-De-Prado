@@ -53,7 +53,7 @@ def populate_entry_trend(dataframe) -> pd.DataFrame:
     """Logic to define entry positions in strategy"""
 
     dataframe.loc[
-        (qtpylib.crossed_above(dataframe['cusum_trigger'], 0.5))
+        (qtpylib.crossed_above(dataframe['entry_trigger'], 0.5))
         & (dataframe['volume'] > 0),
         ['enter_long', 'enter_tag']] = (1, 'enter_long_trigger')
 
