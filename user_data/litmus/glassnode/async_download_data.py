@@ -1,5 +1,6 @@
 # Data download class for Glassnode. Originally written by Hugh. Adapted by Mark.
 
+import arrow
 import datetime
 import logging
 import multitasking
@@ -24,6 +25,8 @@ logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(formatter)
+if (logger.hasHandlers()):
+    logger.handlers.clear()
 logger.addHandler(stream_handler)
 
 
@@ -36,7 +39,8 @@ class GlassnodeData:
 
         # Initialize sqlite database
         connection_string = "sqlite:///litmus_external_signals.sqlite"
-        self.db_engine = sqlalchemy.create_engine(connection_string)
+        self.db_engine = sqlalchemy.create_engine(connection_string,
+                                                  connect_args={'timeout': 15})
 
     def get_endpoints(self, metric_path: list[str] = None, token: list[str] = None,
                       resolution: list[str] = None):
@@ -71,24 +75,27 @@ class GlassnodeData:
 
         return self.ep_df
 
-    def get_metric(self, path: str, token: str, resolution: str):
+    @multitasking.task
+    def get_metric(self, path: str, token: str, resolution: str, from_date: str):
         """Download historical data for a single token and metric."""
 
         while True:
             # Call Glassnode API and get result
             logger.info(f"Requesting data from Glassnode for {path}, {token}, {resolution}")
+            from_ts = arrow.get(from_date).int_timestamp
+            to_ts = arrow.utcnow().int_timestamp
             params = {'a': token,
                       'i': resolution,
                       'api_key': self.API_KEY,
-                      's': 1420074000,  # 2015
-                      'u': int(time.time())}
+                      's': from_ts,
+                      'u': to_ts}
             self.res = requests.get(
-                "https://api.glassnode.com{}".format(path), params)  # type: ignore
+                "https://api.glassnode.com{}".format(path), params)
 
             # Check if rate limiting kicked in, sleep if so
             if self.res.status_code == 429:
-                logger.info(f"Status {self.res.status_code} for {path}, {token}, {resolution}. "
-                            f"Pausing for 60 seconds...")
+                logger.info(f"Status {self.res.status_code} for {path}, "
+                            f"{token}, {resolution}. Pausing for 60 seconds...")
                 time.sleep(60)
 
             elif self.res.status_code == 200:
@@ -111,41 +118,43 @@ class GlassnodeData:
                         # Cast to str to avoid sqlite int too big error
                         metric_df = metric_df.astype(str)
                         metric_df.set_index(ix, inplace=True)
-                    return metric_df
+
+                    # Save to  DB
+                    if metric_df is not None:
+                        metric_name = f"gn_{resolution}_{path.replace('/', '_')}"
+                        metric_df['update_timestamp'] = datetime.datetime.utcnow()
+                        self.save_to_db(metric_df, metric_name)
+                        break
+                    elif metric_df is None:
+                        logger.warning(f"Error: Empty results returned for {path}")
+                        break
 
                 except Exception as e:
                     logger.error(f"Error thrown for {path} for {token}: {e}")
                     logger.error(f"Response text: {self.res.text}")
-                    return None
+                    break
             else:
                 logger.warning(f'Error: Request for {path} for {token}: {self.res.text}')
-                return None
+                break
 
     def get_metrics(self, metric_path: list[str] = None, token: list[str] = None,
-                    resolution: list[str] = None):
+                    resolution: list[str] = None, from_date: str = '2015-01-01'):
         """Download data for multiple metrics for a given token."""
 
-        metric_df = self.get_endpoints(metric_path, token, resolution)
+        ep_df = self.get_endpoints(metric_path, token, resolution)
 
-        for ix, metric in metric_df.iterrows():
+        for ix, metric in ep_df.iterrows():
 
             try:
-                df = self.get_metric(metric['path'], metric['token'], metric['resolution'])
-                if df is not None:
-                    metric_name = f"gn_{metric['resolution']}_{metric['path'].replace('/', '_')}"
-                    df['update_timestamp'] = datetime.datetime.utcnow()
-                    self.save_to_db(df, metric_name)
-
-                elif df is None:
-                    logger.warning(f"Error: Empty results returned for {metric['path']}")
-
+                self.get_metric(metric['path'], metric['token'], metric['resolution'], from_date)
             except Exception as e:
                 logger.error(f"Issue getting {metric['path']} for {metric['token']}: {e}")
 
+        multitasking.wait_for_tasks()
         logger.info('Process complete...')
 
     def save_to_db(self, df, table_name):
-        """Save datafrmae to splite database"""
+        """Save datafrmae to sqlite database"""
 
         try:
             pangres.upsert(con=self.db_engine, df=df, table_name=table_name, if_row_exists='update',

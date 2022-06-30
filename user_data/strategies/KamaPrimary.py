@@ -4,15 +4,13 @@
 
 from collections import defaultdict
 
-import pandas as pd
-
 from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy, merge_informative_pair
 from pandas import DataFrame
 from user_data.litmus import indicator_helpers
 from user_data.litmus.glassnode import download_data
 
-import litmus_cusum as litmus
+import litmus_kama as litmus
 import ta.momentum
 
 # Prevent pandas complaining with future warning errors
@@ -275,7 +273,7 @@ class KamaPrimary(IStrategy):
         self.dataframe_btc_1h = indicator_helpers.add_all_ta_informative(
             self.dataframe_btc_1h, suffix='_btc')
 
-        # Across Token Features: BTC Glassnode
+        """# Across Token Features: BTC Glassnode
         gn_btc = []
         for f in self.gn_btc_f:
             SUFFIX = '_ppo'
@@ -287,7 +285,7 @@ class KamaPrimary(IStrategy):
             f_df.set_index(keys='date' + SUFFIX, inplace=True)
             gn_btc.append(f_df)
         self.gn_btc_data = pd.concat(gn_btc, axis=1)
-        self.gn_btc_data.reset_index(inplace=True)
+        self.gn_btc_data.reset_index(inplace=True)"""
 
     def populate_indicators(self, dataframe: DataFrame,
                             metadata: dict) -> DataFrame:
@@ -344,10 +342,10 @@ class KamaPrimary(IStrategy):
             gn_data[f]['date_key'] += '_10m'
             dataframe.drop(columns=gn_data[f]['date_key'], inplace=True)
 
-        # Glassnode: Across token features (BTC)
+        """# Glassnode: Across token features (BTC)
         dataframe = merge_informative_pair(
             dataframe=dataframe, informative=self.gn_btc_data.copy(), timeframe=self.timeframe,
-            timeframe_inf='10m', ffill=True, date_column='date_ppo')
+            timeframe_inf='10m', ffill=True, date_column='date_ppo')"""
 
         # Add reference to pair so ML model can generate feature for prediction
         dataframe['pair_copy'] = metadata['pair']
