@@ -6,6 +6,7 @@ import freqtrade.vendor.qtpylib.indicators as qtpylib
 import numpy as np
 import pandas as pd
 import ta.momentum
+import ta.volatility
 
 
 def plot_config():
@@ -15,7 +16,14 @@ def plot_config():
     plot_config['main_plot'] = {
         "kama": {
             "color": "purple"
-        }
+        },
+        "upper_threshold": {
+            "color": "grey"
+        },
+        "lower_threshold": {
+            "color": "grey"
+        },
+
     }
     plot_config['subplots'] = {
         "KAMA": {
@@ -27,6 +35,9 @@ def plot_config():
             },
             "kama_delta": {
                 "color": "purple"
+            },
+            "kama_delta2": {
+                "color": "yellow"
             },
         },
         "POS": {
@@ -45,10 +56,18 @@ def plot_config():
 def populate_indicators(dataframe) -> pd.DataFrame:
     """Features/columns needed to support strategy"""
 
+    dataframe['atr_volatility'] = ta.volatility.average_true_range(
+        dataframe['high'], dataframe['low'], dataframe['close'], window=14, fillna=True)
+
+    # Compute daily volatility (used for triple barrier method)
+    dataframe['upper_threshold'] = dataframe['close'] + dataframe['atr_volatility'] * 3
+    dataframe['lower_threshold'] = dataframe['close'] - dataframe['atr_volatility']
+
+    # KAMA Strategy
     kama_window = 14
-    dataframe['kama'] = ta.momentum.kama(
-        dataframe['close'], window=kama_window, pow1=2, pow2=20)
+    dataframe['kama'] = ta.momentum.kama(dataframe['close'], window=kama_window, pow1=2, pow2=20)
     dataframe['kama_delta'] = dataframe['kama'] - dataframe['kama'].shift(1)
+    dataframe['kama_delta2'] = dataframe['kama_delta'] - dataframe['kama_delta'].shift(1)
 
     # Entry/Exit dynamic threshold
     kama_entry_coeff = 1

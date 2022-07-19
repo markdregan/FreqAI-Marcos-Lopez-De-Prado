@@ -87,7 +87,7 @@ def cusum_filter(df: pd.DataFrame, threshold_coeff: float) -> pd.DataFrame:
     return df
 
 
-def daily_volatility(df: pd.DataFrame, shift: int, lookback: int):
+def daily_volatility(close: pd.DataFrame, shift: int, lookback: int):
     """Compute daily volatility of price series
         --------
         dataframe: must contain column for close
@@ -95,8 +95,7 @@ def daily_volatility(df: pd.DataFrame, shift: int, lookback: int):
         lookback: period over which ema averaging will be computed over
         """
 
-    df = df.copy()
-    df['log_returns_daily'] = np.log(df['close'] / df['close'].shift(shift))
-    df['daily_volatility'] = df['log_returns_daily'].ewm(span=lookback).std()
+    log_returns_daily = np.log(close / close.shift(shift))
+    daily_volatility = log_returns_daily.ewm(span=lookback).std(ddof=0)
 
-    return df
+    return daily_volatility

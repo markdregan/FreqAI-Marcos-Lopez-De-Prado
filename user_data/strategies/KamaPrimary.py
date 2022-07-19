@@ -2,8 +2,7 @@
 # Tradingview: https://www.tradingview.com/chart/WeEVLg4V/
 # Author: markdregan@gmail.com
 
-from collections import defaultdict
-
+from freqtrade.exchange import timeframe_to_prev_date
 from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy, merge_informative_pair
 from pandas import DataFrame
@@ -11,7 +10,6 @@ from user_data.litmus import indicator_helpers
 from user_data.litmus.glassnode import download_data
 
 import litmus_kama as litmus
-import ta.momentum
 
 # Prevent pandas complaining with future warning errors
 import warnings
@@ -294,7 +292,7 @@ class KamaPrimary(IStrategy):
         dataframe = indicator_helpers.add_all_ta_informative(
             dataframe, suffix='')
 
-        # Get glassnode signals & derive TA indicators
+        """# Get glassnode signals & derive TA indicators
         token = metadata['pair'].split('/')[0]
         gn_data = defaultdict(dict)  # type: ignore
         for i, f in enumerate(self.gn_f):
@@ -304,7 +302,7 @@ class KamaPrimary(IStrategy):
                                                     cols_to_drop=['token', 'update_timestamp'])
             gn_data[f]['ta_df'] = indicator_helpers.add_single_ta_informative(
                 gn_data[f]['df'], ta.momentum.ppo, suffix=SUFFIX, col=f)
-            gn_data[f]['date_key'] = 'date' + SUFFIX
+            gn_data[f]['date_key'] = 'date' + SUFFIX"""
 
         # Add informative signals of pair at lower time resolution
         low_res_tf = '1h'
@@ -334,13 +332,13 @@ class KamaPrimary(IStrategy):
             dataframe=dataframe, informative=dataframe_low_res, timeframe=self.timeframe,
             timeframe_inf='1h', ffill=True, date_column='date')
 
-        # Glassnode: Per token features
+        """# Glassnode: Per token features
         for f in gn_data.keys():
             dataframe = merge_informative_pair(
                 dataframe=dataframe, informative=gn_data[f]['ta_df'], timeframe=self.timeframe,
                 timeframe_inf='10m', ffill=True, date_column=gn_data[f]['date_key'])
             gn_data[f]['date_key'] += '_10m'
-            dataframe.drop(columns=gn_data[f]['date_key'], inplace=True)
+            dataframe.drop(columns=gn_data[f]['date_key'], inplace=True)"""
 
         """# Glassnode: Across token features (BTC)
         dataframe = merge_informative_pair(
@@ -393,17 +391,30 @@ class KamaPrimary(IStrategy):
         if (current_time - trade.open_date_utc).seconds > vertical_barrier_seconds:
             return 'vertical_barrier_force_sell'
 
-        # Close trades when they exceed upper/lower barriers
-        trade_open_rate = trade.open_rate
-        PT_MULTIPLIER = 1.02
+        # Get the pairs dataframe
+        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+
+        # Look up original candle on the trade date
+        trade_date = timeframe_to_prev_date(self.timeframe, trade.open_date_utc)
+        trade_candle = dataframe.loc[dataframe['date'] == trade_date]
+
+        # Define upper and lower barriers based on daily volatility
+        upper_threshold = trade_candle['upper_threshold'].squeeze()
+        lower_threshold = trade_candle['lower_threshold'].squeeze()
+
+        # Define a min upper and lower barrier based on % returns
+        PT_MULTIPLIER = 1.05
         SL_MULTIPLIER = 0.98
 
+        min_upper_threshold = PT_MULTIPLIER * trade_candle['close'].squeeze()
+        min_lower_threshold = SL_MULTIPLIER * trade_candle['close'].squeeze()
+
         # Profit taking upper barrier sell trigger
-        if current_rate > trade_open_rate * PT_MULTIPLIER:
+        if current_rate > max(upper_threshold, min_upper_threshold):
             return 'upper_barrier_pt_sell'
 
         # Stop loss lower barrier sell trigger
-        elif current_rate < trade_open_rate * SL_MULTIPLIER:
+        elif current_rate < min(lower_threshold, min_lower_threshold):
             return 'lower_barrier_sl_sell'
 
         return None
