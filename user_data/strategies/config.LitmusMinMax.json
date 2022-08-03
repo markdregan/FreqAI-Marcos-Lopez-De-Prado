@@ -28,7 +28,18 @@
         },
         "pair_whitelist": [
 	        "1INCH/USDT",
-	        "AAVE/USDT"
+            "AAVE/USDT",
+            "ADA/USDT",
+            "SOL/USDT",
+            "ALGO/USDT",
+            "DOGE/USDT",
+            "DYDX/USDT",
+            "ENJ/USDT",
+            "ETC/USDT",
+            "IOTA/USDT",
+            "MATIC/USDT",
+            "SUSHI/USDT",
+            "XRP/USDT"
         ],
         "pair_blacklist": []
     },
@@ -92,6 +103,9 @@
             "verbose": false,
             "loss_function": "MultiRMSE",
             "early_stopping_rounds": 200
+        },
+        "extra_returns_per_train": {
+            "total_profit": 4
         }
     },
     "telegram": {

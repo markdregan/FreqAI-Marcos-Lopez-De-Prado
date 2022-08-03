@@ -1,4 +1,5 @@
 
+from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.persistence import Trade
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy, merge_informative_pair
 from functools import reduce
@@ -373,3 +374,16 @@ class LitmusMinMaxStrategy(IStrategy):
                 return False
 
         return True
+
+    def analyze_trade_database(self, dk: FreqaiDataKitchen, pair: str) -> None:
+        """
+        User analyzes the trade database here and returns summary stats which will be passed back
+        to the strategy for reinforcement learning or for additional adaptive metrics for use
+        in entry/exit signals. Store these metrics in dk.data['extra_returns_per_train'] and
+        they will format themselves into the dataframe as an additional column in the user
+        strategy. User has access to the current trade database in dk.trade_database_df.
+        """
+        # total_profit = dk.trade_database_df['close_profit_abs'].sum()
+        # dk.data['extra_returns_per_train']['total_profit'] = total_profit
+
+        return

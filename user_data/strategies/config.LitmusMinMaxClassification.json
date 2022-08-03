@@ -91,7 +91,8 @@
             "task_type": "CPU",
             "verbose": false,
             "early_stopping_rounds": 20
-        }
+        },
+        "extra_returns_per_train": {"total_profit": 4}
     },
     "telegram": {
         "enabled": false,
