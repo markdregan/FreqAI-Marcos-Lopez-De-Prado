@@ -1,8 +1,9 @@
 import logging
 
-from typing import Any, Dict
-from catboost import CatBoostRegressor, Pool
+from catboost import CatBoostRegressor
 from freqtrade.freqai.prediction_models.BaseRegressionModel import BaseRegressionModel
+from sklearn.multioutput import MultiOutputRegressor
+from typing import Any, Dict
 
 
 logger = logging.getLogger(__name__)
@@ -22,26 +23,26 @@ class LitmusMultiRegressionModel(BaseRegressionModel):
                                 all the training and test data/labels.
         """
 
-        train_data = Pool(
-            data=data_dictionary["train_features"],
-            label=data_dictionary["train_labels"],
-            weight=data_dictionary["train_weights"],
-        )
+        # Flip test and train so we retain most recent data for training.
+        X_test = data_dictionary["train_features"]
+        y_test = data_dictionary["train_labels"]
+        weight_test = data_dictionary["train_weights"]
 
-        test_data = Pool(
-            data=data_dictionary["test_features"],
-            label=data_dictionary["test_labels"],
-            weight=data_dictionary["test_weights"],
-        )
+        X_train = data_dictionary["test_features"]
+        y_train = data_dictionary["test_labels"]
+        weight_train = data_dictionary["test_weights"]
 
-        model = CatBoostRegressor(
+        estimator = CatBoostRegressor(
             allow_writing_files=False,
             **self.model_training_parameters
         )
 
+        model = MultiOutputRegressor(estimator, n_jobs=-1)
+
         # Calculate best model performance using all features
         # Train on data closest to present, test on data in the past
-        model.fit(X=test_data, eval_set=train_data)
+        model.fit(X=X_train, y=y_train, sample_weight=weight_train,
+                  eval_set=(X_test, y_test, weight_test))
         logger.info(f"Best model performance: {model.get_best_score()}")
         logger.info(f"Best iteration: {model.best_iteration_}")
 

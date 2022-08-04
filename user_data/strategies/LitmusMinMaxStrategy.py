@@ -169,7 +169,7 @@ class LitmusMinMaxStrategy(IStrategy):
                 df["%-hour_of_day"] = df["date"].dt.hour
 
                 # Max extreme value
-                df["s-max-close"] = (
+                df["&s-max-close"] = (
                         df["close"]
                         .shift(-self.freqai_info["feature_parameters"]["label_period_candles"])
                         .rolling(self.freqai_info["feature_parameters"]["label_period_candles"] + 1)
@@ -179,41 +179,52 @@ class LitmusMinMaxStrategy(IStrategy):
                 )
 
                 # Define Min & Max binary indicators
-                min_peaks = argrelextrema(df["close"].values, np.less, order=20)
-                max_peaks = argrelextrema(df["close"].values, np.greater, order=20)
+                min_peaks = argrelextrema(df["close"].values, np.less, order=30)
+                max_peaks = argrelextrema(df["close"].values, np.greater, order=30)
 
                 df["&s-minima"] = 0
                 df["&s-maxima"] = 0
                 df["real-minima"] = 0
                 df["real-maxima"] = 0
 
-                proximity_tolerance = 0.01
+                # proximity_tolerance = 0.01
 
                 for mp in min_peaks[0]:
                     df.at[mp, "real-minima"] = 1
                     df.at[mp, "&s-minima"] = 1
-                    min_peak_value = df.at[mp, "close"]
+                    """min_peak_value = df.at[mp, "close"]
                     if abs(df.at[mp - 1, "close"] / min_peak_value - 1) < proximity_tolerance:
                         df.at[mp - 1, "&s-minima"] = 1
                         df.at[mp - 1, "real-minima"] = 0.5
                     if abs(df.at[mp + 1, "close"] / min_peak_value - 1) < proximity_tolerance:
                         df.at[mp + 1, "&s-minima"] = 1
-                        df.at[mp + 1, "real-minima"] = 0.5
+                        df.at[mp + 1, "real-minima"] = 0.5"""
 
                 for mp in max_peaks[0]:
                     df.at[mp, "real-maxima"] = 1
                     df.at[mp, "&s-maxima"] = 1
-                    max_peak_value = df.at[mp, "close"]
+                    """max_peak_value = df.at[mp, "close"]
                     if abs(df.at[mp - 1, "close"] / max_peak_value - 1) < proximity_tolerance:
                         df.at[mp - 1, "&s-maxima"] = 1
                         df.at[mp - 1, "real-maxima"] = 0.5
                     if abs(df.at[mp + 1, "close"] / max_peak_value - 1) < proximity_tolerance:
                         df.at[mp + 1, "&s-maxima"] = 1
-                        df.at[mp + 1, "real-maxima"] = 0.5
+                        df.at[mp + 1, "real-maxima"] = 0.5"""
 
                 # Create shifted target for predicting missing max/min
-                df["s-minima-shift-2"] = df["&s-minima"].shift(2)
-                df["s-maxima-shift-2"] = df["&s-maxima"].shift(2)
+                """lookback_period = 5
+                df["&s-minima-missed"] = (
+                    df["&s-minima"]
+                    .shift(1)
+                    .rolling(lookback_period)
+                    .apply(some_func)
+                )
+                df["&s-maxima-missed"] = (
+                    df["&s-maxima"]
+                    .shift(1)
+                    .rolling(lookback_period)
+                    .apply(some_func)
+                )"""
 
         return df
 
@@ -268,11 +279,14 @@ class LitmusMinMaxStrategy(IStrategy):
         return df
 
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
+
         exit_long_conditions = [1 == 1, df["&s-maxima"] > df["long_exit_target"]]
+
         if exit_long_conditions:
             df.loc[reduce(lambda x, y: x & y, exit_long_conditions), "exit_long"] = 1
 
         exit_short_conditions = [1 == 1, df["&s-minima"] > df["short_exit_target"]]
+
         if exit_short_conditions:
             df.loc[reduce(lambda x, y: x & y, exit_short_conditions), "exit_short"] = 1
 
