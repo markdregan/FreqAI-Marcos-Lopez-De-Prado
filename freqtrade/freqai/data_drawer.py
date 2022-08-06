@@ -76,6 +76,7 @@ class FreqaiDataDrawer:
         self.load_historic_predictions_from_disk()
         self.training_queue: Dict[str, int] = {}
         self.history_lock = threading.Lock()
+        self.old_DBSCAN_eps: Dict[str, float] = {}
 
     def load_drawer_from_disk(self):
         """
@@ -225,23 +226,41 @@ class FreqaiDataDrawer:
         historical candles, and also stores historical predictions despite retrainings (so stored
         predictions are true predictions, not just inferencing on trained data)
         """
+
         # dynamic df returned to strategy and plotted in frequi
         mrv_df = self.model_return_values[pair] = pd.DataFrame()
 
-        for label in dk.label_list:
-            mrv_df[label] = pred_df[label]
-            mrv_df[f"{label}_mean"] = dk.data["labels_mean"][label]
-            mrv_df[f"{label}_std"] = dk.data["labels_std"][label]
+        # if user reused `idenfitier` in config and has historical predictions collected, loadthem
+        # so that frequi remains uninterrupted after a crash
+        hist_df = self.historic_predictions
+        if pair in hist_df:
+            len_diff = len(hist_df[pair].index) - len(pred_df.index)
+            if len_diff < 0:
+                df_concat = pd.concat([pred_df.iloc[:abs(len_diff)], hist_df[pair]],
+                                      ignore_index=True, keys=hist_df[pair].keys())
+            else:
+                df_concat = hist_df[pair].tail(len(pred_df.index)).reset_index(drop=True)
+            df_concat = df_concat.fillna(0)
+            self.model_return_values[pair] = df_concat
+            logger.info(f'Setting initial FreqUI plots from historical data for {pair}.')
 
-        if self.freqai_info["feature_parameters"].get("DI_threshold", 0) > 0:
-            mrv_df["DI_values"] = dk.DI_values
+        else:
+            for label in dk.label_list:
+                mrv_df[label] = pred_df[label]
+                if mrv_df[label].dtype == object:
+                    continue
+                mrv_df[f"{label}_mean"] = dk.data["labels_mean"][label]
+                mrv_df[f"{label}_std"] = dk.data["labels_std"][label]
 
-        mrv_df["do_predict"] = do_preds
+            if self.freqai_info["feature_parameters"].get("DI_threshold", 0) > 0:
+                mrv_df["DI_values"] = dk.DI_values
 
-        if dk.data['extra_returns_per_train']:
-            rets = dk.data['extra_returns_per_train']
-            for return_str in rets:
-                mrv_df[return_str] = rets[return_str]
+            mrv_df["do_predict"] = do_preds
+
+            if dk.data['extra_returns_per_train']:
+                rets = dk.data['extra_returns_per_train']
+                for return_str in rets:
+                    mrv_df[return_str] = rets[return_str]
 
         # for keras type models, the conv_window needs to be prepended so
         # viewing is correct in frequi
@@ -279,6 +298,8 @@ class FreqaiDataDrawer:
 
         for label in dk.label_list:
             df[label].iloc[-1] = predictions[label].iloc[-1]
+            if df[label].dtype == object:
+                continue
             df[f"{label}_mean"].iloc[-1] = dk.data["labels_mean"][label]
             df[f"{label}_std"].iloc[-1] = dk.data["labels_std"][label]
 

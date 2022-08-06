@@ -123,7 +123,7 @@ class IFreqaiModel(ABC):
 
         dataframe = dk.remove_features_from_df(dk.return_dataframe)
         del dk
-        return self.return_values(dataframe)
+        return dataframe
 
     @threaded
     def start_scanning(self, strategy: IStrategy) -> None:
@@ -384,6 +384,14 @@ class IFreqaiModel(ABC):
         if self.freqai_info["feature_parameters"].get("DI_threshold", 0):
             dk.data["avg_mean_dist"] = dk.compute_distances()
 
+        if self.freqai_info["feature_parameters"].get("use_DBSCAN_to_remove_outliers", False):
+            if dk.pair in self.dd.old_DBSCAN_eps:
+                eps = self.dd.old_DBSCAN_eps[dk.pair]
+            else:
+                eps = None
+            dk.use_DBSCAN_to_remove_outliers(predict=False, eps=eps)
+            self.dd.old_DBSCAN_eps[dk.pair] = dk.data['DBSCAN_eps']
+
     def data_cleaning_predict(self, dk: FreqaiDataKitchen, dataframe: DataFrame) -> None:
         """
         Base data cleaning method for predict.
@@ -405,6 +413,9 @@ class IFreqaiModel(ABC):
 
         if self.freqai_info["feature_parameters"].get("DI_threshold", 0):
             dk.check_if_pred_in_training_spaces()
+
+        if self.freqai_info["feature_parameters"].get("use_DBSCAN_to_remove_outliers", False):
+            dk.use_DBSCAN_to_remove_outliers(predict=True)
 
     def model_exists(
         self,
@@ -521,6 +532,8 @@ class IFreqaiModel(ABC):
         :param: pair: str = current pair
         """
         num_candles = self.freqai_info.get('fit_live_predictions_candles', 600)
+        if not num_candles:
+            num_candles = 600
         df_tail = df.tail(num_candles)
         trained_predictions = model.predict(df_tail)
         pred_df = DataFrame(trained_predictions, columns=dk.label_list)
@@ -595,17 +608,6 @@ class IFreqaiModel(ABC):
         :do_predict: np.array of 1s and 0s to indicate places where freqai needed to remove
         data (NaNs) or felt uncertain about data (i.e. SVM and/or DI index)
         """
-
-    @abstractmethod
-    def return_values(self, dataframe: DataFrame) -> DataFrame:
-        """
-        User defines the dataframe to be returned to strategy here.
-        :param dataframe: DataFrame = the full dataframe for the current prediction (live)
-                                      or --timerange (backtesting)
-        :return: dataframe: DataFrame = dataframe filled with user defined data
-        """
-
-        return
 
     def analyze_trade_database(self, dk: FreqaiDataKitchen, pair: str) -> None:
         """

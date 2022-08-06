@@ -4,15 +4,17 @@ import logging
 import shutil
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from pandas import DataFrame
 from sklearn import linear_model
+from sklearn.cluster import DBSCAN
 from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.model_selection import train_test_split
+from sklearn.neighbors import NearestNeighbors
 
 from freqtrade.configuration import TimeRange
 from freqtrade.data.history.history_utils import refresh_backtest_ohlcv_data
@@ -85,12 +87,17 @@ class FreqaiDataKitchen:
                 config["freqai"]["backtest_period_days"],
             )
 
+        self.database_path: Optional[Path] = None
+
         if self.live:
-            db_url = self.config.get('db_url', 'sqlite://')
-            self.database_path = '' if db_url == 'sqlite://' else str(db_url).split('///')[1]
-            self.trade_database_df: DataFrame = pd.DataFrame()
+            db_url = self.config.get('db_url', None)
+            self.database_path = Path(db_url)
+            self.database_name = Path(*self.database_path.parts[1:])
+
+        self.trade_database_df: DataFrame = pd.DataFrame()
 
         self.data['extra_returns_per_train'] = self.freqai_config.get('extra_returns_per_train', {})
+        self.thread_count = self.freqai_config.get("data_kitchen_thread_count", -1)
 
     def set_paths(
         self,
@@ -287,7 +294,7 @@ class FreqaiDataKitchen:
             self.data[item + "_min"] = train_min[item]
 
         for item in data_dictionary["train_labels"].keys():
-            if data_dictionary["train_labels"][item].dtype == str:
+            if data_dictionary["train_labels"][item].dtype == object:
                 continue
             train_labels_max = data_dictionary["train_labels"][item].max()
             train_labels_min = data_dictionary["train_labels"][item].min()
@@ -497,9 +504,9 @@ class FreqaiDataKitchen:
         point. This metric defines the neighborhood of trained data and is used
         for prediction confidence in the Dissimilarity Index
         """
-        logger.info("computing average mean distance for all training points")
-        tc = self.freqai_config.get("model_training_parameters", {}).get("thread_count", -1)
-        pairwise = pairwise_distances(self.data_dictionary["train_features"], n_jobs=tc)
+        # logger.info("computing average mean distance for all training points")
+        pairwise = pairwise_distances(
+            self.data_dictionary["train_features"], n_jobs=self.thread_count)
         avg_mean_dist = pairwise.mean(axis=1).mean()
 
         return avg_mean_dist
@@ -530,7 +537,7 @@ class FreqaiDataKitchen:
 
             if (len(do_predict) - do_predict.sum()) > 0:
                 logger.info(
-                    f"svm_remove_outliers() tossed {len(do_predict) - do_predict.sum()} predictions"
+                    f"SVM tossed {len(do_predict) - do_predict.sum()} predictions."
                 )
             self.do_predict += do_predict
             self.do_predict -= 1
@@ -556,8 +563,8 @@ class FreqaiDataKitchen:
             ]
 
             logger.info(
-                f"svm_remove_outliers() tossed {len(y_pred) - dropped_points.sum()}"
-                f" train points from {len(y_pred)}"
+                f"SVM tossed {len(y_pred) - dropped_points.sum()}"
+                f" train points from {len(y_pred)} total points."
             )
 
             # same for test data
@@ -574,8 +581,80 @@ class FreqaiDataKitchen:
                 ]
 
             logger.info(
-                f"svm_remove_outliers() tossed {len(y_pred) - dropped_points.sum()}"
-                f" test points from {len(y_pred)}"
+                f"SVM tossed {len(y_pred) - dropped_points.sum()}"
+                f" test points from {len(y_pred)} total points."
+            )
+
+        return
+
+    def use_DBSCAN_to_remove_outliers(self, predict: bool, eps=None) -> None:
+        """
+        Use DBSCAN to cluster training data and remove "noisy" data (read outliers).
+        User controls this via the config param `DBSCAN_outlier_pct` which indicates the
+        pct of training data that they want to be considered outliers.
+        :params:
+        predict: bool = If False (training), iterate to find the best hyper parameters to match
+        user requested outlier percent target. If True (prediction), use the parameters
+        determined from the previous training to estimate if the current prediction point
+        is an outlier.
+        """
+
+        if predict:
+            train_ft_df = self.data_dictionary['train_features']
+            pred_ft_df = self.data_dictionary['prediction_features']
+            num_preds = len(pred_ft_df)
+            df = pd.concat([train_ft_df, pred_ft_df], axis=0, ignore_index=True)
+            clustering = DBSCAN(
+                                    eps=self.data['DBSCAN_eps'],
+                                    min_samples=self.data['DBSCAN_min_samples'],
+                                    n_jobs=self.thread_count
+                                ).fit(df)
+            do_predict = np.where(clustering.labels_[-num_preds:] == -1, 0, 1)
+
+            if (len(do_predict) - do_predict.sum()) > 0:
+                logger.info(
+                    f"DBSCAN tossed {len(do_predict) - do_predict.sum()} predictions"
+                )
+            self.do_predict += do_predict
+            self.do_predict -= 1
+
+        else:
+
+            MinPts = len(self.data_dictionary['train_features'].columns) * 2
+            # measure pairwise distances to train_features.shape[1]*2 nearest neighbours
+            neighbors = NearestNeighbors(
+                n_neighbors=MinPts, n_jobs=self.thread_count)
+            neighbors_fit = neighbors.fit(self.data_dictionary['train_features'])
+            distances, _ = neighbors_fit.kneighbors(self.data_dictionary['train_features'])
+            distances = np.sort(distances, axis=0)
+            index_ten_pct = int(len(distances[:, 1]) * 0.1)
+            distances = distances[index_ten_pct:, 1]
+            epsilon = distances[-1]
+
+            clustering = DBSCAN(eps=epsilon, min_samples=MinPts,
+                                n_jobs=int(self.thread_count)).fit(
+                                                    self.data_dictionary['train_features']
+                                                )
+
+            logger.info(f'DBSCAN found eps of {epsilon}.')
+
+            self.data['DBSCAN_eps'] = epsilon
+            self.data['DBSCAN_min_samples'] = MinPts
+            dropped_points = np.where(clustering.labels_ == -1, 1, 0)
+
+            self.data_dictionary['train_features'] = self.data_dictionary['train_features'][
+                (clustering.labels_ != -1)
+            ]
+            self.data_dictionary["train_labels"] = self.data_dictionary["train_labels"][
+                (clustering.labels_ != -1)
+            ]
+            self.data_dictionary["train_weights"] = self.data_dictionary["train_weights"][
+                (clustering.labels_ != -1)
+            ]
+
+            logger.info(
+                f"DBSCAN tossed {dropped_points.sum()}"
+                f" train points from {len(clustering.labels_)}"
             )
 
         return
@@ -596,7 +675,6 @@ class FreqaiDataKitchen:
 
         self.training_features_list = features
         self.label_list = labels
-        # return features, labels
 
     def check_if_pred_in_training_spaces(self) -> None:
         """
@@ -606,11 +684,10 @@ class FreqaiDataKitchen:
         from the training data set.
         """
 
-        tc = self.freqai_config.get("model_training_parameters", {}).get("thread_count", -1)
         distance = pairwise_distances(
             self.data_dictionary["train_features"],
             self.data_dictionary["prediction_features"],
-            n_jobs=tc,
+            n_jobs=self.thread_count,
         )
 
         self.DI_values = distance.min(axis=0) / self.data["avg_mean_dist"]
@@ -677,7 +754,6 @@ class FreqaiDataKitchen:
         to_keep = [col for col in dataframe.columns if not col.startswith("&")]
         self.return_dataframe = pd.concat([dataframe[to_keep], self.full_df], axis=1)
 
-        # self.append_df = DataFrame()
         self.full_df = DataFrame()
 
         return
@@ -853,6 +929,8 @@ class FreqaiDataKitchen:
             prepend=self.config.get("prepend_data", False),
         )
 
+        exchange.close()
+
     def set_all_pairs(self) -> None:
 
         self.all_pairs = copy.deepcopy(
@@ -932,6 +1010,8 @@ class FreqaiDataKitchen:
 
         self.data["labels_mean"], self.data["labels_std"] = {}, {}
         for label in self.label_list:
+            if self.data_dictionary["train_labels"][label].dtype == object:
+                continue
             f = spy.stats.norm.fit(self.data_dictionary["train_labels"][label])
             self.data["labels_mean"][label], self.data["labels_std"][label] = f[0], f[1]
 
@@ -956,11 +1036,11 @@ class FreqaiDataKitchen:
 
     def get_current_trade_database(self) -> None:
 
-        if self.database_path == '':
-            logger.warning('No trade databse found. Skipping analysis.')
+        if self.database_path is None:
+            logger.warning('No trade database found. Skipping analysis.')
             return
 
-        data = sqlite3.connect(self.database_path)
+        data = sqlite3.connect(self.database_name)
         query = data.execute("SELECT * From trades")
         cols = [column[0] for column in query.description]
         df = pd.DataFrame.from_records(data=query.fetchall(), columns=cols)

@@ -105,6 +105,7 @@ Mandatory parameters are marked as **Required**, which means that they are requi
 | `stratify_training_data` | This value is used to indicate the stratification of the data. e.g. 2 would set every 2nd data point into a separate dataset to be pulled from during training/testing. <br> **Datatype:** positive integer.
 | `indicator_max_period_candles` | The maximum *period* used in `populate_any_indicators()` for indicator creation. FreqAI uses this information in combination with the maximum timeframe to calculate how many data points it should download so that the first data point does not have a NaN <br> **Datatype:** positive integer.
 | `indicator_periods_candles` | A list of integers used to duplicate all indicators according to a set of periods and add them to the feature set. <br> **Datatype:** list of positive integers.
+| `use_DBSCAN_to_remove_outliers` | Inactive by default. If true, FreqAI clusters data using DBSCAN to identify and remove outliers from training and prediction data. <br> **Datatype:** float (fraction of 1).
 |  |  **Data split parameters**
 | `data_split_parameters` | Include any additional parameters available from Scikit-learn `test_train_split()`, which are shown [here](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.train_test_split.html) <br> **Datatype:** dictionary.
 | `test_size` | Fraction of data that should be used for testing instead of training. <br> **Datatype:** positive float below 1.
@@ -410,9 +411,17 @@ The Freqai strategy requires the user to include the following lines of code in 
 The user should also include `populate_any_indicators()` from `templates/FreqaiExampleStrategy.py` which builds 
 the feature set with a proper naming convention for the IFreqaiModel to use later.
 
+### Setting classifier targets
+
+FreqAI includes a the `CatboostClassifier` via the flag `--freqaimodel CatboostClassifier`. Typically, the user would set the targets using strings:
+
+```python
+df['&s-up_or_down'] = np.where( df["close"].shift(-100) > df["close"], 'up', 'down')
+```
+
 ### Building an IFreqaiModel
 
-FreqAI has multiple example prediction model based libraries such as `Catboost` regression (`freqai/prediction_models/CatboostPredictionModel.py`) and `LightGBM` regression. 
+FreqAI has multiple example prediction model based libraries such as `Catboost` regression (`freqai/prediction_models/CatboostRegressor.py`) and `LightGBM` regression. 
 However, users can customize and create their own prediction models using the `IFreqaiModel` class.
 Users are encouraged to inherit `train()` and `predict()` to let them customize various aspects of their training procedures.
 
@@ -519,7 +528,7 @@ variance of the data set is >= 0.999.
 
 ### Removing outliers using a Support Vector Machine (SVM)
 
-The user can tell Freqai to remove outlier data points from the training/test data sets by setting:
+The user can tell FreqAI to remove outlier data points from the training/test data sets by setting:
 
 ```json
     "freqai": {
@@ -529,8 +538,20 @@ The user can tell Freqai to remove outlier data points from the training/test da
     }
 ```
 
-Freqai will train an SVM on the training data (or components if the user activated
+FreqAI will train an SVM on the training data (or components if the user activated
 `principal_component_analysis`) and remove any data point that it deems to be sitting beyond the feature space.
+
+### Clustering the training data and removing outliers with DBSCAN
+
+The user can tell FreqAI to use DBSCAN to cluster training data and remove outliers from the training data set. The user activates `use_DBSCAN_to_remove_outliers` to cluster training data for identification of outliers. Also used to detect incoming outliers for prediction data points.
+
+```json
+    "freqai": {
+        "feature_parameters" : {
+            "use_DBSCAN_to_remove_outliers": true
+        }
+    }
+```
 
 ### Stratifying the data
 
