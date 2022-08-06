@@ -169,7 +169,7 @@ class LitmusMinMaxStrategy(IStrategy):
                 df["%-hour_of_day"] = df["date"].dt.hour
 
                 # Max extreme value
-                df["&s-max-close"] = (
+                df["s-max-close"] = (
                         df["close"]
                         .shift(-self.freqai_info["feature_parameters"]["label_period_candles"])
                         .rolling(self.freqai_info["feature_parameters"]["label_period_candles"] + 1)

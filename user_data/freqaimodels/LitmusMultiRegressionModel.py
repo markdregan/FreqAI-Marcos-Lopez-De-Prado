@@ -26,7 +26,7 @@ class LitmusMultiRegressionModel(BaseRegressionModel):
         # Flip test and train so we retain most recent data for training.
         X_test = data_dictionary["train_features"]
         y_test = data_dictionary["train_labels"]
-        weight_test = data_dictionary["train_weights"]
+        # weight_test = data_dictionary["train_weights"]
 
         X_train = data_dictionary["test_features"]
         y_train = data_dictionary["test_labels"]
@@ -37,12 +37,12 @@ class LitmusMultiRegressionModel(BaseRegressionModel):
             **self.model_training_parameters
         )
 
-        model = MultiOutputRegressor(estimator, n_jobs=-1)
+        model = MultiOutputRegressor(estimator)
 
         # Calculate best model performance using all features
         # Train on data closest to present, test on data in the past
         model.fit(X=X_train, y=y_train, sample_weight=weight_train,
-                  eval_set=(X_test, y_test, weight_test))
+                  eval_set=(X_test, y_test))
         logger.info(f"Best model performance: {model.get_best_score()}")
         logger.info(f"Best iteration: {model.best_iteration_}")
 

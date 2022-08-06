@@ -28,7 +28,18 @@
         },
         "pair_whitelist": [
 	        "1INCH/USDT",
-            "AAVE/USDT"
+            "AAVE/USDT",
+            "ADA/USDT",
+            "SOL/USDT",
+            "ALGO/USDT",
+            "DOGE/USDT",
+            "DYDX/USDT",
+            "ENJ/USDT",
+            "ETC/USDT",
+            "IOTA/USDT",
+            "MATIC/USDT",
+            "SUSHI/USDT",
+            "XRP/USDT"
         ],
         "pair_blacklist": []
     },
@@ -59,7 +70,7 @@
         "backtest_period_days": 2,
         "live_retrain_hours": 0,
         "fit_live_predictions_candles": 200,
-        "identifier": "Litmus-02",
+        "identifier": "Litmus-09",
         "live_trained_timestamp": 0,
         "feature_parameters": {
             "include_timeframes": [
@@ -89,15 +100,13 @@
             "n_estimators": 2000,
             "task_type": "CPU",
             "verbose": true,
-            "loss_function": "RMSE",
             "early_stopping_rounds": 20
         },
         "extra_returns_per_train": {
-            "total_profit": 4
         }
     },
     "telegram": {
-        "enabled": false,
+        "enabled": true,
         "token": "5012333300:AAFiwgqakXFwAsDBLqgXDLTnWqQCMBsYbK4",
         "chat_id": "-729673394",
         "chat": {
