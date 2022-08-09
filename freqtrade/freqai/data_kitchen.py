@@ -105,6 +105,7 @@ class FreqaiDataKitchen:
         self.data['extra_returns_per_train'] = self.freqai_config.get('extra_returns_per_train', {})
         self.thread_count = self.freqai_config.get("data_kitchen_thread_count", -1)
         self.train_dates: DataFrame = pd.DataFrame()
+        self.unique_classes: Dict[str, list] = {}
 
     def set_paths(
         self,
@@ -992,6 +993,8 @@ class FreqaiDataKitchen:
                         informative=corr_dataframes[i][tf]
                     )
 
+        self.get_unique_classes_from_labels(dataframe)
+
         return dataframe
 
     def fit_labels(self) -> None:
@@ -1038,6 +1041,14 @@ class FreqaiDataKitchen:
         df = pd.DataFrame.from_records(data=query.fetchall(), columns=cols)
         self.trade_database_df = df.dropna(subset='close_date')
         data.close()
+
+    def get_unique_classes_from_labels(self, dataframe: DataFrame) -> None:
+
+        self.find_features(dataframe)
+
+        for key in self.label_list:
+            if dataframe[key].dtype == object:
+                self.unique_classes[key] = dataframe[key].dropna().unique()
 
     def np_encoder(self, object):
         if isinstance(object, np.generic):
