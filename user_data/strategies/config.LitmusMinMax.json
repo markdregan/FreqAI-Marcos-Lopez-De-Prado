@@ -71,7 +71,7 @@
                 "ETH/USDT"
             ],
             "label_period_candles": 80,
-            "include_shifted_candles": 2,
+            "include_shifted_candles": 4,
             "DI_threshold": 0.9,
             "weight_factor": 0.9,
             "principal_component_analysis": false,
@@ -89,6 +89,18 @@
             "task_type": "CPU",
             "verbose": false,
             "early_stopping_rounds": 20
+        },
+        "extra_returns_per_train": {
+            "roc_auc_is_maxima": 1,
+            "roc_auc_is_minima": 1,
+            "roc_auc_missed_maxima": 1,
+            "roc_auc_missed_minima": 1,
+            "roc_auc_not_minmax": 1,
+            "avg_precision_is_maxima": 1,
+            "avg_precision_is_minima": 1,
+            "avg_precision_missed_maxima": 1,
+            "avg_precision_missed_minima": 1,
+            "avg_precision_not_minmax": 1
         }
     },
     "telegram": {

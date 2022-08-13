@@ -3,19 +3,18 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+# from imblearn.combine import SMOTEENN
 from catboost import CatBoostClassifier
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.prediction_models.BaseRegressionModel import BaseRegressionModel
-# from imblearn.combine import SMOTEENN
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline
 from pandas import DataFrame
-# from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.feature_selection import RFECV
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report
+from sklearn.metrics import roc_auc_score, average_precision_score
 from sklearn.multiclass import OneVsRestClassifier
-# from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.tree import DecisionTreeClassifier
 from typing import Any, Dict, Tuple
 
 logger = logging.getLogger(__name__)
@@ -42,39 +41,43 @@ class LitmusClassifier(BaseRegressionModel):
         X_test = data_dictionary["test_features"]
         y_test = data_dictionary["test_labels"]
 
-        fs_est = LogisticRegression(max_iter=1000, n_jobs=1)
+        fs_est = DecisionTreeClassifier()
         fs = RFECV(fs_est, min_features_to_select=500, scoring="average_precision",
-                   step=0.2, cv=5, verbose=2)
-        clf = CatBoostClassifier(iterations=500, loss_function="Logloss", allow_writing_files=False,
-                                 early_stopping_rounds=50, verbose=True)
-        sampling = SMOTE()
+                   step=0.2, cv=3, verbose=2, n_jobs=1)
+        sampling = SMOTE(sampling_strategy=0.4, n_jobs=1)
+        clf = CatBoostClassifier(iterations=300, loss_function="Logloss", allow_writing_files=False,
+                                 early_stopping_rounds=50, verbose=False)
 
         pipe = Pipeline([
             ("feature_selection", fs),
-            ('sampling', sampling),
+            ("sampling", sampling),
             ("clf", clf),
-        ], verbose=True)
+        ])
 
-        ovr_estimator = OneVsRestClassifier(pipe, n_jobs=-1)
+        ovr_estimator = OneVsRestClassifier(pipe, n_jobs=1)
 
         ovr_estimator.fit(X_train, y_train)
 
-        # Classification Report
-        y_pred = ovr_estimator.predict(X_test)
-        print(classification_report(y_test, y_pred))
+        # Model performance metrics
+        encoder = LabelBinarizer()
+        encoder.fit(y_train)
+        y_test_enc = encoder.transform(y_test)
+        y_pred_proba = ovr_estimator.predict_proba(X_test)
 
-        # TODO: PR Curve
-        # TODO: ROC Curve
+        for i, c in enumerate(encoder.classes_):
+            logger.debug(f"Model performance scores for: {c}")
+
+            # ROC
+            roc_auc = roc_auc_score(y_test_enc[:, i], y_pred_proba[:, i])
+            # dk.data['extra_returns_per_train'][f"roc_auc_{c}"] = roc_auc
+            logger.debug(f"ROC AUC score: {roc_auc}")
+
+            # Average Precision
+            avg_precision = average_precision_score(y_test_enc[:, i], y_pred_proba[:, i])
+            # dk.data['extra_returns_per_train'][f"avg_precision_{c}"] = roc_auc
+            logger.debug(f"Average precision score: {avg_precision}")
+
         # TODO: Feature Importance
-        # TODO: Add IMB Learn
-
-        """cbr = CatBoostClassifier(
-            allow_writing_files=False,
-            loss_function='MultiClass',
-            **self.model_training_parameters,
-        )
-
-        cbr.fit(train_data)"""
 
         return ovr_estimator
 

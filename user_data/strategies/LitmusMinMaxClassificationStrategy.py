@@ -45,9 +45,24 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "short_exit_target": {"color": "FireBrick"},
                 "missed_minima": {"color": "LightPink"}
             },
+            "Not M/M": {
+                "not_minmax": {"color": "Moccasin"}
+            },
             "Real": {
                 "real-minima": {"color": "blue"},
                 "real-maxima": {"color": "yellow"}
+            },
+            "ROC": {
+                "roc_auc_is_maxima": {"color": "#B2D732"},
+                "roc_auc_is_minima": {"color": "#FC600A"},
+                "roc_auc_missed_maxima": {"color": "#F0F7D4"},
+                "roc_auc_missed_minima": {"color": "#F7E0D4"}
+            },
+            "Prec": {
+                "avg_precision_is_maxima": {"color": "#B2D732"},
+                "avg_precision_is_minima": {"color": "#FC600A"},
+                "avg_precision_missed_maxima": {"color": "#F0F7D4"},
+                "avg_precision_missed_minima": {"color": "#F7E0D4"}
             },
         },
     }
@@ -195,20 +210,14 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
         dataframe = self.freqai.start(dataframe, metadata, self)
 
         # Standard deviation entry / exists
-        entry_std = 1.4
-        exit_std = 1.3
 
         # Short
-        dataframe["short_entry_target"] = (
-                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * entry_std)
-        dataframe["short_exit_target"] = (
-                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * exit_std)
+        dataframe["short_entry_target"] = 0.2
+        dataframe["short_exit_target"] = 0.15
 
         # Long
-        dataframe["long_entry_target"] = (
-                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * entry_std)
-        dataframe["long_exit_target"] = (
-                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * exit_std)
+        dataframe["long_entry_target"] = 0.2
+        dataframe["long_exit_target"] = 0.15
 
         return dataframe
 
@@ -241,8 +250,6 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         if exit_short_conditions:
             df.loc[reduce(lambda x, y: x & y, exit_short_conditions), "exit_short"] = 1
-
-        print(df)
 
         return df
 
