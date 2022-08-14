@@ -6,7 +6,7 @@ import pandas as pd
 import time
 
 # from imblearn.combine import SMOTEENN
-from catboost import CatBoostClassifier, EShapCalcType, EFeaturesSelectionAlgorithm, Pool
+from catboost import CatBoostClassifier, EShapCalcType, EFeaturesSelectionAlgorithm, Pool, EFstrType
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
 from user_data.litmus import model_helpers
@@ -153,13 +153,13 @@ class LitmusOneClassifier(IFreqaiModel):
             # AUC per class
             roc_auc = roc_auc_score(y_test_enc[:, i], y_pred_proba[:, i])
             dk.data['extra_returns_per_train'][f"roc_auc_{c}"] = roc_auc
-            logger.debug(f"ROC AUC score: {roc_auc}")
+            logger.debug(f"{c} - ROC AUC score: {roc_auc}")
 
             # Threshold values to achieve min precision value
             precision, recall, threshold = precision_recall_curve(
                 y_test_enc[:, i], y_pred_proba[:, i])
 
-            for p in [0.25, 0.5, 0.75]:
+            for p in [0.1, 0.3, 0.5]:
                 t = model_helpers.get_threshold(precision, threshold, p)
                 dk.data['extra_returns_per_train'][f"threshold_for_precision_{p}_{c}"] = t
                 logger.debug(f"{c} - Threshold for precision {p}: {t}")
@@ -170,6 +170,13 @@ class LitmusOneClassifier(IFreqaiModel):
                 f1 = f1_score(y_test_enc[:, i], y_pred_proba[:, i] >= t)
                 logger.debug(f"{c} - F1 score for precision {p}: {f1}")
 
-        # TODO: Feature Importance
+        # Feature Importance
+        feat_imp_df = clf.get_feature_importance(
+            data=eval_data, type=EFstrType.LossFunctionChange, prettified=True,
+            shap_calc_type="Approximate")
+        feat_imp_df["pair"] = dk.pair
+        feat_imp_df["train_time"] = time.time()
+        feat_imp_df.set_index(keys=["pair", "train_time"], inplace=True)
+        # TODO: Save to db
 
         return clf
