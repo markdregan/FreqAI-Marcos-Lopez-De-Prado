@@ -230,33 +230,85 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
     def populate_entry_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
-        enter_long_conditions = [df["do_predict"] == 1, df["is_minima"] > df["long_entry_target"]]
-
-        if enter_long_conditions:
+        # Long Entry
+        conditions = [df["do_predict"] == 1, df["is_minima"] > df["long_entry_target"]]
+        if conditions:
             df.loc[
-                reduce(lambda x, y: x & y, enter_long_conditions), ["enter_long", "enter_tag"]
-            ] = (1, "long")
+                reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
+            ] = (1, "is_minima")
 
-        enter_short_conditions = [df["do_predict"] == 1, df["is_maxima"] > df["short_entry_target"]]
-
-        if enter_short_conditions:
+        # Missed Long Entry
+        conditions = [df["do_predict"] == 1, df["missed_minima"] > df["long_entry_target"]]
+        if conditions:
             df.loc[
-                reduce(lambda x, y: x & y, enter_short_conditions), ["enter_short", "enter_tag"]
-            ] = (1, "short")
+                reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
+            ] = (1, "missed_minima")
+
+        # Short Entry
+        conditions = [df["do_predict"] == 1, df["is_maxima"] > df["short_entry_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
+            ] = (1, "is_maxima")
+
+        # Missed Short Entry
+        conditions = [df["do_predict"] == 1, df["missed_maxima"] > df["short_entry_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
+            ] = (1, "missed_maxima")
 
         return df
 
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
-        exit_long_conditions = [1 == 1, df["is_maxima"] > df["long_exit_target"]]
+        # Long Exit
+        conditions = [1 == 1, df["is_maxima"] > df["long_exit_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
+            ] = (1, "is_maxima")
 
+        # Missed Long Exit
+        conditions = [1 == 1, df["missed_maxima"] > df["long_exit_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
+            ] = (1, "missed_maxima")
+
+        # Short Exit
+        conditions = [1 == 1, df["is_minima"] > df["short_exit_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
+            ] = (1, "is_minima")
+
+        # Missed Short Exit
+        conditions = [1 == 1, df["missed_minima"] > df["short_exit_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
+            ] = (1, "missed_minima")
+
+        """# Long Exit
+        exit_long_conditions = [1 == 1, df["is_maxima"] > df["long_exit_target"]]
         if exit_long_conditions:
             df.loc[reduce(lambda x, y: x & y, exit_long_conditions), "exit_long"] = 1
 
-        exit_short_conditions = [1 == 1, df["is_minima"] > df["short_exit_target"]]
+        # Missed Long Exit
+        exit_long_conditions = [1 == 1, df["missed_maxima"] > df["long_exit_target"]]
+        if exit_long_conditions:
+            df.loc[reduce(lambda x, y: x & y, exit_long_conditions), "exit_long"] = 1
 
+        # Short Exit
+        exit_short_conditions = [1 == 1, df["is_minima"] > df["short_exit_target"]]
         if exit_short_conditions:
             df.loc[reduce(lambda x, y: x & y, exit_short_conditions), "exit_short"] = 1
+
+        # Missed Short Exit
+        exit_short_conditions = [1 == 1, df["missed_minima"] > df["short_exit_target"]]
+        if exit_short_conditions:
+            df.loc[reduce(lambda x, y: x & y, exit_short_conditions), "exit_short"] = 1"""
 
         return df
 
