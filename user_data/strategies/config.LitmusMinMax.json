@@ -101,7 +101,22 @@
             "avg_precision_missed_maxima": 1,
             "avg_precision_missed_minima": 1,
             "avg_precision_not_minmax": 1,
-            "time_to_train": 0
+            "time_to_train": 0,
+            "threshold_for_precision_0.25_is_maxima": 1,
+            "threshold_for_precision_0.25_is_minima": 1,
+            "threshold_for_precision_0.25_missed_maxima": 1,
+            "threshold_for_precision_0.25_missed_minima": 1,
+            "threshold_for_precision_0.25_not_minmax": 1,
+            "threshold_for_precision_0.5_is_maxima": 1,
+            "threshold_for_precision_0.5_is_minima": 1,
+            "threshold_for_precision_0.5_missed_maxima": 1,
+            "threshold_for_precision_0.5_missed_minima": 1,
+            "threshold_for_precision_0.5_not_minmax": 1,
+            "threshold_for_precision_0.75_is_maxima": 1,
+            "threshold_for_precision_0.75_is_minima": 1,
+            "threshold_for_precision_0.75_missed_maxima": 1,
+            "threshold_for_precision_0.75_missed_minima": 1,
+            "threshold_for_precision_0.75_not_minmax": 1
         }
     },
     "telegram": {

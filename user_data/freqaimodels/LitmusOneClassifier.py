@@ -9,9 +9,10 @@ import time
 from catboost import CatBoostClassifier, EShapCalcType, EFeaturesSelectionAlgorithm, Pool
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
+from user_data.litmus import model_helpers
 from imblearn.over_sampling import SMOTE
 from pandas import DataFrame
-from sklearn.metrics import roc_auc_score, average_precision_score
+from sklearn.metrics import roc_auc_score, precision_recall_curve
 from sklearn.preprocessing import LabelBinarizer
 from typing import Any, Dict, Tuple
 
@@ -142,27 +143,26 @@ class LitmusOneClassifier(IFreqaiModel):
         logger.info(f"Time taken to select best features & train model: {end_time} seconds")
 
         # Model performance metrics
-        start_time = time.time()
         encoder = LabelBinarizer()
         encoder.fit(data_dictionary["train_labels"])
         y_test_enc = encoder.transform(data_dictionary["test_labels"])
         y_pred_proba = clf.predict_proba(data_dictionary["test_features"])
 
+        # Model performance metrics
         for i, c in enumerate(encoder.classes_):
-            logger.debug(f"Model performance scores for: {c}")
-
-            # ROC
+            # AUC per class
             roc_auc = roc_auc_score(y_test_enc[:, i], y_pred_proba[:, i])
             dk.data['extra_returns_per_train'][f"roc_auc_{c}"] = roc_auc
             logger.debug(f"ROC AUC score: {roc_auc}")
 
-            # Average Precision
-            avg_precision = average_precision_score(y_test_enc[:, i], y_pred_proba[:, i])
-            dk.data['extra_returns_per_train'][f"avg_precision_{c}"] = avg_precision
-            logger.debug(f"Average precision score: {avg_precision}")
+            # Threshold values to achieve min precision value
+            precision, recall, threshold = precision_recall_curve(
+                y_test_enc[:, i], y_pred_proba[:, i])
 
-        end_time = time.time() - start_time
-        logger.info(f"Time taken to score model: {end_time} seconds")
+            for p in [0.25, 0.5, 0.75]:
+                t = model_helpers.get_threshold(precision, threshold, p)
+                dk.data['extra_returns_per_train'][f"threshold_for_precision_{p}_{c}"] = t
+                logger.debug(f"Threshold for precision {p}: {t}")
 
         # TODO: Feature Importance
 
