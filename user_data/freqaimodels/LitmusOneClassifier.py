@@ -9,7 +9,7 @@ import time
 from catboost import CatBoostClassifier, EShapCalcType, EFeaturesSelectionAlgorithm, Pool, EFstrType
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
-from user_data.litmus import model_helpers
+from user_data.litmus import model_helpers, db_helpers
 from imblearn.over_sampling import SMOTE
 from pandas import DataFrame
 from sklearn.metrics import roc_auc_score, precision_recall_curve, recall_score, f1_score
@@ -144,9 +144,9 @@ class LitmusOneClassifier(IFreqaiModel):
 
         # Model performance metrics
         encoder = LabelBinarizer()
-        encoder.fit(data_dictionary["train_labels"])
-        y_test_enc = encoder.transform(data_dictionary["test_labels"])
-        y_pred_proba = clf.predict_proba(data_dictionary["test_features"])
+        encoder.fit(y_train)
+        y_test_enc = encoder.transform(y_test)
+        y_pred_proba = clf.predict_proba(X_test)
 
         # Model performance metrics
         for i, c in enumerate(encoder.classes_):
@@ -176,7 +176,8 @@ class LitmusOneClassifier(IFreqaiModel):
             shap_calc_type="Approximate")
         feat_imp_df["pair"] = dk.pair
         feat_imp_df["train_time"] = time.time()
-        feat_imp_df.set_index(keys=["pair", "train_time"], inplace=True)
-        # TODO: Save to db
+        feat_imp_df.set_index(keys=["pair", "train_time", "Feature Id"], inplace=True)
+        print(feat_imp_df.sort_values(by="Importances", ascending=False).head(50))
+        db_helpers.save_feature_importance(feat_imp_df)
 
         return clf

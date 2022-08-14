@@ -37,12 +37,16 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "is_maxima": {"color": "CornflowerBlue"},
                 "long_exit_target": {"color": "FireBrick"},
                 "short_entry_target": {"color": "DarkOliveGreen"},
+                "missed_long_exit_target": {"color": "Fuchsia"},
+                "missed_short_entry_target": {"color": "LimeGreen"},
                 "missed_maxima": {"color": "LightPink"}
             },
             "Minima": {
                 "is_minima": {"color": "CornflowerBlue"},
                 "long_entry_target": {"color": "DarkOliveGreen"},
                 "short_exit_target": {"color": "FireBrick"},
+                "missed_long_entry_target": {"color": "LimeGreen"},
+                "missed_short_exit_target": {"color": "Fuchsia"},
                 "missed_minima": {"color": "LightPink"}
             },
             "Not M/M": {
@@ -58,11 +62,11 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "roc_auc_missed_maxima": {"color": "#F0F7D4"},
                 "roc_auc_missed_minima": {"color": "#F7E0D4"}
             },
-            "Prec 0.1": {
-                "threshold_for_precision_0.1_is_maxima": {"color": "Thistle"},
-                "threshold_for_precision_0.1_is_minima": {"color": "SteelBlue"},
-                "threshold_for_precision_0.1_missed_maxima": {"color": "Wheat"},
-                "threshold_for_precision_0.1_missed_minima": {"color": "Plum"}
+            "Prec 0.3": {
+                "threshold_for_precision_0.3_is_maxima": {"color": "Thistle"},
+                "threshold_for_precision_0.3_is_minima": {"color": "SteelBlue"},
+                "threshold_for_precision_0.3_missed_maxima": {"color": "Wheat"},
+                "threshold_for_precision_0.3_missed_minima": {"color": "Plum"}
             },
             "Time": {
                 "time_to_train": {"color": "Salmon"}
@@ -120,41 +124,41 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             for t in self.freqai_info["feature_parameters"]["indicator_periods_candles"]:
 
                 t = int(t)
-                informative[f"%-{coin}rsi-period_{t}"] = ta.RSI(informative, timeperiod=t)
-                informative[f"%-{coin}mfi-period_{t}"] = ta.MFI(informative, timeperiod=t)
-                informative[f"%-{coin}adx-period_{t}"] = ta.ADX(informative, window=t)
-                informative[f"{coin}sma-period_{t}"] = ta.SMA(informative, timeperiod=t)
-                informative[f"{coin}ema-period_{t}"] = ta.EMA(informative, timeperiod=t)
-                informative[f"%-{coin}close_over_sma-period_{t}"] = (
-                    informative["close"] / informative[f"{coin}sma-period_{t}"]
+                informative[f"%-{coin}-rsi-period_{t}"] = ta.RSI(informative, timeperiod=t)
+                informative[f"%-{coin}-mfi-period_{t}"] = ta.MFI(informative, timeperiod=t)
+                informative[f"%-{coin}-adx-period_{t}"] = ta.ADX(informative, window=t)
+                informative[f"{coin}-sma-period_{t}"] = ta.SMA(informative, timeperiod=t)
+                informative[f"{coin}-ema-period_{t}"] = ta.EMA(informative, timeperiod=t)
+                informative[f"%-{coin}-close_over_sma-period_{t}"] = (
+                    informative["close"] / informative[f"{coin}-sma-period_{t}"]
                 )
 
-                informative[f"%-{coin}mfi-period_{t}"] = ta.MFI(informative, timeperiod=t)
+                informative[f"%-{coin}-mfi-period_{t}"] = ta.MFI(informative, timeperiod=t)
 
                 bollinger = qtpylib.bollinger_bands(
                     qtpylib.typical_price(informative), window=t, stds=2.2
                 )
-                informative[f"{coin}bb_lowerband-period_{t}"] = bollinger["lower"]
-                informative[f"{coin}bb_middleband-period_{t}"] = bollinger["mid"]
-                informative[f"{coin}bb_upperband-period_{t}"] = bollinger["upper"]
+                informative[f"{coin}-bb_lowerband-period_{t}"] = bollinger["lower"]
+                informative[f"{coin}-bb_middleband-period_{t}"] = bollinger["mid"]
+                informative[f"{coin}-bb_upperband-period_{t}"] = bollinger["upper"]
 
-                informative[f"%-{coin}bb_width-period_{t}"] = (
-                    informative[f"{coin}bb_upperband-period_{t}"]
-                    - informative[f"{coin}bb_lowerband-period_{t}"]
-                ) / informative[f"{coin}bb_middleband-period_{t}"]
-                informative[f"%-{coin}close-bb_lower-period_{t}"] = (
-                    informative["close"] / informative[f"{coin}bb_lowerband-period_{t}"]
+                informative[f"%-{coin}-bb_width-period_{t}"] = (
+                    informative[f"{coin}-bb_upperband-period_{t}"]
+                    - informative[f"{coin}-bb_lowerband-period_{t}"]
+                ) / informative[f"{coin}-bb_middleband-period_{t}"]
+                informative[f"%-{coin}-close-bb_lower-period_{t}"] = (
+                    informative["close"] / informative[f"{coin}-bb_lowerband-period_{t}"]
                 )
 
-                informative[f"%-{coin}roc-period_{t}"] = ta.ROC(informative, timeperiod=t)
+                informative[f"%-{coin}-roc-period_{t}"] = ta.ROC(informative, timeperiod=t)
 
-                informative[f"%-{coin}relative_volume-period_{t}"] = (
+                informative[f"%-{coin}-relative_volume-period_{t}"] = (
                     informative["volume"] / informative["volume"].rolling(t).mean()
                 )
 
-            informative[f"%-{coin}pct-change"] = informative["close"].pct_change()
-            informative[f"%-{coin}raw_volume"] = informative["volume"]
-            informative[f"%-{coin}raw_price"] = informative["close"]
+            informative[f"%-{coin}-pct-change"] = informative["close"].pct_change()
+            informative[f"%-{coin}-raw_volume"] = informative["volume"]
+            informative[f"%-{coin}-raw_price"] = informative["close"]
 
             indicators = [col for col in informative if col.startswith("%")]
             # This loop duplicates and shifts all indicators to add a sense of recency to data
@@ -216,15 +220,28 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         dataframe = self.freqai.start(dataframe, metadata, self)
 
-        # Standard deviation entry / exists
+        enter_mul = 1.5
+        exit_mul = 1.2
 
         # Short
-        dataframe["short_entry_target"] = 0.2
-        dataframe["short_exit_target"] = 0.15
+        dataframe["short_entry_target"] = (
+                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * enter_mul)
+        dataframe["short_exit_target"] = (
+                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * exit_mul)
+        dataframe["missed_short_entry_target"] = (
+                dataframe["missed_maxima_mean"] + dataframe["missed_maxima_std"] * enter_mul)
+        dataframe["missed_short_exit_target"] = (
+                dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * exit_mul)
 
         # Long
-        dataframe["long_entry_target"] = 0.2
-        dataframe["long_exit_target"] = 0.15
+        dataframe["long_entry_target"] = (
+                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * enter_mul)
+        dataframe["long_exit_target"] = (
+                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * exit_mul)
+        dataframe["missed_long_entry_target"] = (
+                dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * enter_mul)
+        dataframe["missed_long_exit_target"] = (
+                dataframe["missed_maxima_mean"] + dataframe["missed_maxima_std"] * exit_mul)
 
         return dataframe
 
@@ -238,7 +255,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             ] = (1, "is_minima")
 
         # Missed Long Entry
-        conditions = [df["do_predict"] == 1, df["missed_minima"] > df["long_entry_target"]]
+        conditions = [df["do_predict"] == 1, df["missed_minima"] > df["missed_long_entry_target"]]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
@@ -252,7 +269,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             ] = (1, "is_maxima")
 
         # Missed Short Entry
-        conditions = [df["do_predict"] == 1, df["missed_maxima"] > df["short_entry_target"]]
+        conditions = [df["do_predict"] == 1, df["missed_maxima"] > df["missed_short_entry_target"]]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
@@ -270,7 +287,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             ] = (1, "is_maxima")
 
         # Missed Long Exit
-        conditions = [1 == 1, df["missed_maxima"] > df["long_exit_target"]]
+        conditions = [1 == 1, df["missed_maxima"] > df["missed_long_exit_target"]]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
@@ -284,31 +301,11 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             ] = (1, "is_minima")
 
         # Missed Short Exit
-        conditions = [1 == 1, df["missed_minima"] > df["short_exit_target"]]
+        conditions = [1 == 1, df["missed_minima"] > df["missed_short_exit_target"]]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
             ] = (1, "missed_minima")
-
-        """# Long Exit
-        exit_long_conditions = [1 == 1, df["is_maxima"] > df["long_exit_target"]]
-        if exit_long_conditions:
-            df.loc[reduce(lambda x, y: x & y, exit_long_conditions), "exit_long"] = 1
-
-        # Missed Long Exit
-        exit_long_conditions = [1 == 1, df["missed_maxima"] > df["long_exit_target"]]
-        if exit_long_conditions:
-            df.loc[reduce(lambda x, y: x & y, exit_long_conditions), "exit_long"] = 1
-
-        # Short Exit
-        exit_short_conditions = [1 == 1, df["is_minima"] > df["short_exit_target"]]
-        if exit_short_conditions:
-            df.loc[reduce(lambda x, y: x & y, exit_short_conditions), "exit_short"] = 1
-
-        # Missed Short Exit
-        exit_short_conditions = [1 == 1, df["missed_minima"] > df["short_exit_target"]]
-        if exit_short_conditions:
-            df.loc[reduce(lambda x, y: x & y, exit_short_conditions), "exit_short"] = 1"""
 
         return df
 

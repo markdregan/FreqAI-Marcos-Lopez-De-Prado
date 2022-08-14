@@ -59,7 +59,7 @@
         "backtest_period_days": 2,
         "live_retrain_hours": 0.25,
         "fit_live_predictions_candles": 200,
-        "identifier": "Litmus-02",
+        "identifier": "Litmus-03",
         "feature_parameters": {
             "include_timeframes": [
                 "3m",
@@ -77,7 +77,7 @@
             "principal_component_analysis": false,
             "use_SVM_to_remove_outliers": true,
             "stratify_training_data": 0,
-            "indicator_max_period_candles": 100,
+            "indicator_max_period_candles": 200,
             "indicator_periods_candles": [10, 20, 50, 100]
         },
         "data_split_parameters": {
