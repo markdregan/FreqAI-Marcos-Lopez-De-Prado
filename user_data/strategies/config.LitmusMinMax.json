@@ -28,9 +28,7 @@
         },
         "pair_whitelist": [
 	        "1INCH/USDT",
-	        "AAVE/USDT",
-            "ADA/USDT",
-            "SOL/USDT"
+	        "AAVE/USDT"
         ],
         "pair_blacklist": []
     },
@@ -83,7 +81,7 @@
             "indicator_periods_candles": [10, 20, 50, 100]
         },
         "data_split_parameters": {
-            "test_size": 0.2,
+            "test_size": 0.5,
             "shuffle": false
         },
         "model_training_parameters": {

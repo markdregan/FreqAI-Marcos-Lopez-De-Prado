@@ -111,19 +111,19 @@ class LitmusOneClassifier(IFreqaiModel):
         all the training and test data/labels.
         """
 
-        smote = SMOTE(n_jobs=1)
-        X_train_res, y_train_res = smote.fit_resample(
-            data_dictionary["train_features"], data_dictionary["train_labels"])
+        # Swap train and test data
+        X_train = data_dictionary["test_features"]
+        y_train = data_dictionary["test_labels"]
+        X_test = data_dictionary["train_features"]
+        y_test = data_dictionary["train_labels"]
 
-        train_data = Pool(
-            data=X_train_res,
-            label=y_train_res
-        )
+        # Address class imbalance
+        smote = SMOTE()
+        X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
 
-        eval_data = Pool(
-            data=data_dictionary["test_features"],
-            label=data_dictionary["test_labels"],
-        )
+        # Create Pool objs for catboost
+        train_data = Pool(data=X_train_res, label=y_train_res)
+        eval_data = Pool(data=X_test, label=y_test)
 
         clf = CatBoostClassifier(
             iterations=1000, loss_function="MultiClass", allow_writing_files=False,
@@ -131,10 +131,10 @@ class LitmusOneClassifier(IFreqaiModel):
 
         # Feature selection & training
         start_time = time.time()
-        all_features = np.arange(len(data_dictionary["train_features"].columns))
+        all_feature_names = np.arange(len(X_train.columns))
         clf.select_features(
             X=train_data, eval_set=eval_data, num_features_to_select=500,
-            features_for_select=all_features, steps=3,
+            features_for_select=all_feature_names, steps=3,
             algorithm=EFeaturesSelectionAlgorithm.RecursiveByPredictionValuesChange,
             shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=False)
         end_time = time.time() - start_time
