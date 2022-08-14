@@ -28,7 +28,9 @@
         },
         "pair_whitelist": [
 	        "1INCH/USDT",
-	        "AAVE/USDT"
+	        "AAVE/USDT",
+            "ADA/USDT",
+            "SOL/USDT"
         ],
         "pair_blacklist": []
     },
@@ -59,7 +61,7 @@
         "backtest_period_days": 2,
         "live_retrain_hours": 0.25,
         "fit_live_predictions_candles": 200,
-        "identifier": "Litmus-01",
+        "identifier": "Litmus-02",
         "feature_parameters": {
             "include_timeframes": [
                 "3m",
@@ -100,7 +102,8 @@
             "avg_precision_is_minima": 1,
             "avg_precision_missed_maxima": 1,
             "avg_precision_missed_minima": 1,
-            "avg_precision_not_minmax": 1
+            "avg_precision_not_minmax": 1,
+            "time_to_train": 0
         }
     },
     "telegram": {

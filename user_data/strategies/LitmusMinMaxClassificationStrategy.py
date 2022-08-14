@@ -64,6 +64,9 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "avg_precision_missed_maxima": {"color": "#F0F7D4"},
                 "avg_precision_missed_minima": {"color": "#F7E0D4"}
             },
+            "Time": {
+                "time_to_train": {"color": "Salmon"}
+            },
         },
     }
 
@@ -176,22 +179,26 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 df["%-hour_of_day"] = df["date"].dt.hour
 
                 # Define Min & Max binary indicators
-                min_peaks = argrelextrema(df["close"].values, np.less, order=20)
-                max_peaks = argrelextrema(df["close"].values, np.greater, order=20)
+                min_peaks, _ = argrelextrema(df["close"].values, np.less, order=20)
+                max_peaks, _ = argrelextrema(df["close"].values, np.greater, order=20)
 
                 df["&target"] = 'not_minmax'
                 df["real-minima"] = 0
                 df["real-maxima"] = 0
 
-                for mp in min_peaks[0]:
+                # Minima
+                for mp in min_peaks:
                     df.at[mp, "real-minima"] = 1
                     df.at[mp, "&target"] = 'is_minima'
                     df.at[mp + 1, "&target"] = 'missed_minima'
+                    df.at[mp + 2, "&target"] = 'missed_minima'
 
-                for mp in max_peaks[0]:
+                # Maxima
+                for mp in max_peaks:
                     df.at[mp, "real-maxima"] = 1
                     df.at[mp, "&target"] = 'is_maxima'
                     df.at[mp + 1, "&target"] = 'missed_maxima'
+                    df.at[mp + 2, "&target"] = 'missed_maxima'
 
         return df
 
