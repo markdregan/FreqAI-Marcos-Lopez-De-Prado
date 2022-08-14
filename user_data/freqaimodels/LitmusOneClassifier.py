@@ -12,7 +12,7 @@ from freqtrade.freqai.freqai_interface import IFreqaiModel
 from user_data.litmus import model_helpers
 from imblearn.over_sampling import SMOTE
 from pandas import DataFrame
-from sklearn.metrics import roc_auc_score, precision_recall_curve
+from sklearn.metrics import roc_auc_score, precision_recall_curve, recall_score, f1_score
 from sklearn.preprocessing import LabelBinarizer
 from typing import Any, Dict, Tuple
 
@@ -162,7 +162,13 @@ class LitmusOneClassifier(IFreqaiModel):
             for p in [0.25, 0.5, 0.75]:
                 t = model_helpers.get_threshold(precision, threshold, p)
                 dk.data['extra_returns_per_train'][f"threshold_for_precision_{p}_{c}"] = t
-                logger.debug(f"Threshold for precision {p}: {t}")
+                logger.debug(f"{c} - Threshold for precision {p}: {t}")
+
+                r = recall_score(y_test_enc[:, i], y_pred_proba[:, i] >= t)
+                logger.debug(f"{c} - Recall for precision {p}: {r}")
+
+                f1 = f1_score(y_test_enc[:, i], y_pred_proba[:, i] >= t)
+                logger.debug(f"{c} - F1 score for precision {p}: {f1}")
 
         # TODO: Feature Importance
 
