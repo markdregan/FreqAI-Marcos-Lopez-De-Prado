@@ -49,20 +49,11 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "missed_short_exit_target": {"color": "Fuchsia"},
                 "missed_minima": {"color": "LightPink"}
             },
-            "Not M/M": {
-                "not_minmax": {"color": "Moccasin"}
-            },
             "Real": {
                 "real-minima": {"color": "blue"},
                 "real-maxima": {"color": "yellow"}
             },
-            "ROC": {
-                "roc_auc_is_maxima": {"color": "#B2D732"},
-                "roc_auc_is_minima": {"color": "#FC600A"},
-                "roc_auc_missed_maxima": {"color": "#F0F7D4"},
-                "roc_auc_missed_minima": {"color": "#F7E0D4"}
-            },
-            "Prec 0.3": {
+            "Prec": {
                 "threshold_for_precision_0.3_is_maxima": {"color": "Thistle"},
                 "threshold_for_precision_0.3_is_minima": {"color": "SteelBlue"},
                 "threshold_for_precision_0.3_missed_maxima": {"color": "Wheat"},
