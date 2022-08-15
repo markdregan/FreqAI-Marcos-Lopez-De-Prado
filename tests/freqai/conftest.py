@@ -25,6 +25,7 @@ def freqai_conf(default_conf, tmpdir):
             "freqaimodel_path": "freqai/prediction_models",
             "timerange": "20180110-20180115",
             "freqai": {
+                "enabled": True,
                 "startup_candles": 10000,
                 "purge_old_models": True,
                 "train_period_days": 5,
@@ -47,7 +48,7 @@ def freqai_conf(default_conf, tmpdir):
                     "indicator_periods_candles": [10],
                 },
                 "data_split_parameters": {"test_size": 0.33, "random_state": 1},
-                "model_training_parameters": {"n_estimators": 100, "verbosity": 0},
+                "model_training_parameters": {"n_estimators": 100},
             },
             "config_files": [Path('config_examples', 'config_freqai.example.json')]
         }

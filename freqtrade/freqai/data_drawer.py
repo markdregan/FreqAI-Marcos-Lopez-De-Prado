@@ -5,13 +5,14 @@ import re
 import shutil
 import threading
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Tuple, TypedDict
 
 import numpy as np
 import pandas as pd
+import rapidjson
 from joblib import dump, load
 from joblib.externals import cloudpickle
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import NDArray
 from pandas import DataFrame
 
 from freqtrade.configuration import TimeRange
@@ -24,12 +25,20 @@ from freqtrade.strategy.interface import IStrategy
 logger = logging.getLogger(__name__)
 
 
+class pair_info(TypedDict):
+    model_filename: str
+    first: bool
+    trained_timestamp: int
+    priority: int
+    data_path: str
+    extras: dict
+
+
 class FreqaiDataDrawer:
     """
     Class aimed at holding all pair models/info in memory for better inferencing/retrainig/saving
     /loading to/from disk.
-    This object remains persistent throughout live/dry, unlike FreqaiDataKitchen, which is
-    reinstantiated for each coin.
+    This object remains persistent throughout live/dry.
 
     Record of contribution:
     FreqAI was developed by a group of individuals who all contributed specific skillsets to the
@@ -46,7 +55,7 @@ class FreqaiDataDrawer:
 
     Beta testing and bug reporting:
     @bloodhunter4rc, Salah Lamkadem @ikonx, @ken11o2, @longyu, @paranoidandy, @smidelis, @smarm
-    Juha Nykänen @suikula, Wagner Costa @wagnercosta
+    Juha Nykänen @suikula, Wagner Costa @wagnercosta, Johan Vlugt @Jooopieeert
     """
 
     def __init__(self, full_path: Path, config: dict, follow_mode: bool = False):
@@ -54,14 +63,13 @@ class FreqaiDataDrawer:
         self.config = config
         self.freqai_info = config.get("freqai", {})
         # dictionary holding all pair metadata necessary to load in from disk
-        self.pair_dict: Dict[str, Any] = {}
+        self.pair_dict: Dict[str, pair_info] = {}
         # dictionary holding all actively inferenced models in memory given a model filename
         self.model_dictionary: Dict[str, Any] = {}
-        self.model_return_values: Dict[str, Any] = {}
-        self.pair_data_dict: Dict[str, Any] = {}
-        self.historic_data: Dict[str, Any] = {}
-        self.historic_predictions: Dict[str, Any] = {}
-        self.follower_dict: Dict[str, Any] = {}
+        self.model_return_values: Dict[str, DataFrame] = {}
+        self.historic_data: Dict[str, Dict[str, DataFrame]] = {}
+        self.historic_predictions: Dict[str, DataFrame] = {}
+        self.follower_dict: Dict[str, pair_info] = {}
         self.full_path = full_path
         self.follower_name: str = self.config.get("bot_name", "follower1")
         self.follower_dict_path = Path(
@@ -76,7 +84,12 @@ class FreqaiDataDrawer:
         self.load_historic_predictions_from_disk()
         self.training_queue: Dict[str, int] = {}
         self.history_lock = threading.Lock()
+        self.save_lock = threading.Lock()
+        self.pair_dict_lock = threading.Lock()
         self.old_DBSCAN_eps: Dict[str, float] = {}
+        self.empty_pair_dict: pair_info = {
+                "model_filename": "", "trained_timestamp": 0,
+                "priority": 1, "first": True, "data_path": "", "extras": {}}
 
     def load_drawer_from_disk(self):
         """
@@ -133,15 +146,18 @@ class FreqaiDataDrawer:
         """
         Save data drawer full of all pair model metadata in present model folder.
         """
-        with open(self.pair_dictionary_path, "w") as fp:
-            json.dump(self.pair_dict, fp, default=self.np_encoder)
+        with self.save_lock:
+            with open(self.pair_dictionary_path, 'w') as fp:
+                rapidjson.dump(self.pair_dict, fp, default=self.np_encoder,
+                               number_mode=rapidjson.NM_NATIVE)
 
     def save_follower_dict_to_disk(self):
         """
         Save follower dictionary to disk (used by strategy for persistent prediction targets)
         """
         with open(self.follower_dict_path, "w") as fp:
-            json.dump(self.follower_dict, fp, default=self.np_encoder)
+            rapidjson.dump(self.follower_dict, fp, default=self.np_encoder,
+                           number_mode=rapidjson.NM_NATIVE)
 
     def create_follower_dict(self):
         """
@@ -175,18 +191,19 @@ class FreqaiDataDrawer:
             trained_timestamp: int = the last time the coin was trained
             return_null_array: bool = Follower could not find pair metadata
         """
+
         pair_dict = self.pair_dict.get(pair)
-        data_path_set = self.pair_dict.get(pair, {}).get("data_path", None)
+        data_path_set = self.pair_dict.get(pair, self.empty_pair_dict).get("data_path", "")
         return_null_array = False
 
         if pair_dict:
             model_filename = pair_dict["model_filename"]
             trained_timestamp = pair_dict["trained_timestamp"]
         elif not self.follow_mode:
-            pair_dict = self.pair_dict[pair] = {}
-            model_filename = pair_dict["model_filename"] = ""
-            trained_timestamp = pair_dict["trained_timestamp"] = 0
-            pair_dict["priority"] = len(self.pair_dict)
+            self.pair_dict[pair] = self.empty_pair_dict.copy()
+            model_filename = ""
+            trained_timestamp = 0
+            self.pair_dict[pair]["priority"] = len(self.pair_dict)
 
         if not data_path_set and self.follow_mode:
             logger.warning(
@@ -205,124 +222,76 @@ class FreqaiDataDrawer:
         if pair_in_dict:
             return
         else:
-            self.pair_dict[metadata["pair"]] = {}
-            self.pair_dict[metadata["pair"]]["model_filename"] = ""
-            self.pair_dict[metadata["pair"]]["first"] = True
-            self.pair_dict[metadata["pair"]]["trained_timestamp"] = 0
+            self.pair_dict[metadata["pair"]] = self.empty_pair_dict.copy()
             self.pair_dict[metadata["pair"]]["priority"] = len(self.pair_dict)
+
             return
 
     def pair_to_end_of_training_queue(self, pair: str) -> None:
         # march all pairs up in the queue
-        for p in self.pair_dict:
-            self.pair_dict[p]["priority"] -= 1
-        # send pair to end of queue
-        self.pair_dict[pair]["priority"] = len(self.pair_dict)
+        with self.pair_dict_lock:
+            for p in self.pair_dict:
+                self.pair_dict[p]["priority"] -= 1
+            # send pair to end of queue
+            self.pair_dict[pair]["priority"] = len(self.pair_dict)
 
-    def set_initial_return_values(self, pair: str, dk: FreqaiDataKitchen,
-                                  pred_df: DataFrame, do_preds: ArrayLike) -> None:
+    def set_initial_return_values(self, pair: str, pred_df: DataFrame) -> None:
         """
-        Set the initial return values to a persistent dataframe. This avoids needing to repredict on
-        historical candles, and also stores historical predictions despite retrainings (so stored
-        predictions are true predictions, not just inferencing on trained data)
+        Set the initial return values to the historical predictions dataframe. This avoids needing
+        to repredict on historical candles, and also stores historical predictions despite
+        retrainings (so stored predictions are true predictions, not just inferencing on trained
+        data)
         """
 
-        # dynamic df returned to strategy and plotted in frequi
-        mrv_df = self.model_return_values[pair] = pd.DataFrame()
-
-        # if user reused `idenfitier` in config and has historical predictions collected, loadthem
-        # so that frequi remains uninterrupted after a crash
         hist_df = self.historic_predictions
-        if pair in hist_df:
-            len_diff = len(hist_df[pair].index) - len(pred_df.index)
-            if len_diff < 0:
-                df_concat = pd.concat([pred_df.iloc[:abs(len_diff)], hist_df[pair]],
-                                      ignore_index=True, keys=hist_df[pair].keys())
-            else:
-                df_concat = hist_df[pair].tail(len(pred_df.index)).reset_index(drop=True)
-            df_concat = df_concat.fillna(0)
-            self.model_return_values[pair] = df_concat
-            logger.info(f'Setting initial FreqUI plots from historical data for {pair}.')
-
+        len_diff = len(hist_df[pair].index) - len(pred_df.index)
+        if len_diff < 0:
+            df_concat = pd.concat([pred_df.iloc[:abs(len_diff)], hist_df[pair]],
+                                  ignore_index=True, keys=hist_df[pair].keys())
         else:
-            for label in dk.label_list:
-                mrv_df[label] = pred_df[label]
-                if mrv_df[label].dtype == object:
-                    continue
-                mrv_df[f"{label}_mean"] = dk.data["labels_mean"][label]
-                mrv_df[f"{label}_std"] = dk.data["labels_std"][label]
-
-            if self.freqai_info["feature_parameters"].get("DI_threshold", 0) > 0:
-                mrv_df["DI_values"] = dk.DI_values
-
-            mrv_df["do_predict"] = do_preds
-
-            if dk.data['extra_returns_per_train']:
-                rets = dk.data['extra_returns_per_train']
-                for return_str in rets:
-                    mrv_df[return_str] = rets[return_str]
-
-        # for keras type models, the conv_window needs to be prepended so
-        # viewing is correct in frequi
-        if self.freqai_info.get('keras', False):
-            n_lost_points = self.freqai_info.get('conv_width', 2)
-            zeros_df = DataFrame(np.zeros((n_lost_points, len(mrv_df.columns))),
-                                 columns=mrv_df.columns)
-            self.model_return_values[pair] = pd.concat(
-                [zeros_df, mrv_df], axis=0, ignore_index=True)
+            df_concat = hist_df[pair].tail(len(pred_df.index)).reset_index(drop=True)
+        df_concat = df_concat.fillna(0)
+        self.model_return_values[pair] = df_concat
 
     def append_model_predictions(self, pair: str, predictions: DataFrame,
                                  do_preds: NDArray[np.int_],
                                  dk: FreqaiDataKitchen, len_df: int) -> None:
+        """
+        Append model predictions to historic predictions dataframe, then set the
+        strategy return dataframe to the tail of the historic predictions. The length of
+        the tail is equivalent to the length of the dataframe that entered FreqAI from
+        the strategy originally. Doing this allows FreqUI to always display the correct
+        historic predictions.
+        """
 
-        # strat seems to feed us variable sized dataframes - and since we are trying to build our
-        # own return array in the same shape, we need to figure out how the size has changed
-        # and adapt our stored/returned info accordingly.
-        length_difference = len(self.model_return_values[pair]) - len_df
-        i = 0
+        index = self.historic_predictions[pair].index[-1:]
+        columns = self.historic_predictions[pair].columns
 
-        if length_difference == 0:
-            i = 1
-        elif length_difference > 0:
-            i = length_difference + 1
+        nan_df = pd.DataFrame(np.nan, index=index, columns=columns)
+        self.historic_predictions[pair] = pd.concat(
+            [self.historic_predictions[pair], nan_df], ignore_index=True, axis=0)
+        df = self.historic_predictions[pair]
 
-        df = self.model_return_values[pair] = self.model_return_values[pair].shift(-i)
-
-        if pair in self.historic_predictions:
-            hp_df = self.historic_predictions[pair]
-            # here are some pandas hula hoops to accommodate the possibility of a series
-            # or dataframe depending number of labels requested by user
-            nan_df = pd.DataFrame(np.nan, index=hp_df.index[-2:] + 2, columns=hp_df.columns)
-            hp_df = pd.concat([hp_df, nan_df], ignore_index=True, axis=0)
-            self.historic_predictions[pair] = hp_df[:-1]
-
-        for label in dk.label_list:
+        # model outputs and associated statistics
+        for label in predictions.columns:
             df[label].iloc[-1] = predictions[label].iloc[-1]
             if df[label].dtype == object:
                 continue
             df[f"{label}_mean"].iloc[-1] = dk.data["labels_mean"][label]
             df[f"{label}_std"].iloc[-1] = dk.data["labels_std"][label]
 
+        # outlier indicators
         df["do_predict"].iloc[-1] = do_preds[-1]
-
         if self.freqai_info["feature_parameters"].get("DI_threshold", 0) > 0:
             df["DI_values"].iloc[-1] = dk.DI_values[-1]
 
+        # extra values the user added within custom prediction model
         if dk.data['extra_returns_per_train']:
             rets = dk.data['extra_returns_per_train']
             for return_str in rets:
                 df[return_str].iloc[-1] = rets[return_str]
 
-        # append the new predictions to persistent storage
-        if pair in self.historic_predictions:
-            for key in df.keys():
-                self.historic_predictions[pair][key].iloc[-1] = df[key].iloc[-1]
-
-        if length_difference < 0:
-            prepend_df = pd.DataFrame(
-                np.zeros((abs(length_difference) - 1, len(df.columns))), columns=df.columns
-            )
-            df = pd.concat([prepend_df, df], axis=0)
+        self.model_return_values[pair] = df.tail(len_df).reset_index(drop=True)
 
     def attach_return_values_to_return_dataframe(
             self, pair: str, dataframe: DataFrame) -> DataFrame:
@@ -343,12 +312,13 @@ class FreqaiDataDrawer:
 
         dk.find_features(dataframe)
 
-        for label in dk.label_list:
+        full_labels = dk.label_list + dk.unique_class_list
+
+        for label in full_labels:
             dataframe[label] = 0
             dataframe[f"{label}_mean"] = 0
             dataframe[f"{label}_std"] = 0
 
-        # dataframe['prediction'] = 0
         dataframe["do_predict"] = 0
 
         if self.freqai_info["feature_parameters"].get("DI_threshold", 0) > 0:
@@ -434,11 +404,15 @@ class FreqaiDataDrawer:
         dk.data["label_list"] = dk.label_list
         # store the metadata
         with open(save_path / f"{dk.model_filename}_metadata.json", "w") as fp:
-            json.dump(dk.data, fp, default=dk.np_encoder)
+            rapidjson.dump(dk.data, fp, default=self.np_encoder, number_mode=rapidjson.NM_NATIVE)
 
         # save the train data to file so we can check preds for area of applicability later
         dk.data_dictionary["train_features"].to_pickle(
             save_path / f"{dk.model_filename}_trained_df.pkl"
+        )
+
+        dk.data_dictionary["train_dates"].to_pickle(
+            save_path / f"{dk.model_filename}_trained_dates_df.pkl"
         )
 
         if self.freqai_info["feature_parameters"].get("principal_component_analysis"):
@@ -552,7 +526,7 @@ class FreqaiDataDrawer:
                     history_data[pair][tf] = pd.concat(
                         [
                             history_data[pair][tf],
-                            strategy.dp.get_pair_dataframe(pair, tf).iloc[index:],
+                            df_dp.iloc[index:],
                         ],
                         ignore_index=True,
                         axis=0,

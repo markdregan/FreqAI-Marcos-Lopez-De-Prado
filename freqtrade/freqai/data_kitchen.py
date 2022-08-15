@@ -2,9 +2,8 @@ import copy
 import datetime
 import logging
 import shutil
-import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -17,9 +16,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.neighbors import NearestNeighbors
 
 from freqtrade.configuration import TimeRange
+from freqtrade.data.dataprovider import DataProvider
 from freqtrade.data.history.history_utils import refresh_backtest_ohlcv_data
 from freqtrade.exceptions import OperationalException
-from freqtrade.resolvers import ExchangeResolver
+from freqtrade.exchange import timeframe_to_seconds
 from freqtrade.strategy.interface import IStrategy
 
 
@@ -33,6 +33,9 @@ class FreqaiDataKitchen:
     """
     Class designed to analyze data for a single pair. Employed by the IFreqaiModel class.
     Functionalities include holding, saving, loading, and analyzing the data.
+
+    This object is not persistent, it is reinstantiated for each coin, each time the coin
+    model needs to be inferenced or trained.
 
     Record of contribution:
     FreqAI was developed by a group of individuals who all contributed specific skillsets to the
@@ -49,7 +52,7 @@ class FreqaiDataKitchen:
 
     Beta testing and bug reporting:
     @bloodhunter4rc, Salah Lamkadem @ikonx, @ken11o2, @longyu, @paranoidandy, @smidelis, @smarm
-    Juha Nykänen @suikula, Wagner Costa @wagnercosta
+    Juha Nykänen @suikula, Wagner Costa @wagnercosta, Johan Vlugt @Jooopieeert
     """
 
     def __init__(
@@ -58,10 +61,10 @@ class FreqaiDataKitchen:
         live: bool = False,
         pair: str = "",
     ):
-        self.data: Dict[Any, Any] = {}
-        self.data_dictionary: Dict[Any, Any] = {}
+        self.data: Dict[str, Any] = {}
+        self.data_dictionary: Dict[str, DataFrame] = {}
         self.config = config
-        self.freqai_config = config["freqai"]
+        self.freqai_config: Dict[str, Any] = config["freqai"]
         self.full_df: DataFrame = DataFrame()
         self.append_df: DataFrame = DataFrame()
         self.data_path = Path()
@@ -70,15 +73,16 @@ class FreqaiDataKitchen:
         self.model_filename: str = ""
         self.live = live
         self.pair = pair
+
         self.svm_model: linear_model.SGDOneClassSVM = None
-        self.keras = self.freqai_config.get("keras", False)
+        self.keras: bool = self.freqai_config.get("keras", False)
         self.set_all_pairs()
         if not self.live:
             if not self.config["timerange"]:
                 raise OperationalException(
                     'Please pass --timerange if you intend to use FreqAI for backtesting.')
             self.full_timerange = self.create_fulltimerange(
-                self.config["timerange"], self.freqai_config.get("train_period_days")
+                self.config["timerange"], self.freqai_config.get("train_period_days", 0)
             )
 
             (self.training_timeranges, self.backtesting_timeranges) = self.split_timerange(
@@ -87,17 +91,11 @@ class FreqaiDataKitchen:
                 config["freqai"]["backtest_period_days"],
             )
 
-        self.database_path: Optional[Path] = None
-
-        if self.live:
-            db_url = self.config.get('db_url', None)
-            self.database_path = Path(db_url)
-            self.database_name = Path(*self.database_path.parts[1:])
-
-        self.trade_database_df: DataFrame = pd.DataFrame()
-
         self.data['extra_returns_per_train'] = self.freqai_config.get('extra_returns_per_train', {})
         self.thread_count = self.freqai_config.get("data_kitchen_thread_count", -1)
+        self.train_dates: DataFrame = pd.DataFrame()
+        self.unique_classes: Dict[str, list] = {}
+        self.unique_class_list: list = []
 
     def set_paths(
         self,
@@ -203,20 +201,23 @@ class FreqaiDataKitchen:
 
         drop_index = pd.isnull(filtered_dataframe).any(1)  # get the rows that have NaNs,
         drop_index = drop_index.replace(True, 1).replace(False, 0)  # pep8 requirement.
-        if (
-            training_filter
-        ):  # we don't care about total row number (total no. datapoints) in training, we only care
+        if (training_filter):
+            # we don't care about total row number (total no. datapoints) in training, we only care
             # about removing any row with NaNs
-            # if labels has multiple columns (user wants to train multiple models), we detect here
+            # if labels has multiple columns (user wants to train multiple modelEs), we detect here
             labels = unfiltered_dataframe.filter(label_list, axis=1)
             drop_index_labels = pd.isnull(labels).any(1)
             drop_index_labels = drop_index_labels.replace(True, 1).replace(False, 0)
+            dates = unfiltered_dataframe['date']
             filtered_dataframe = filtered_dataframe[
                 (drop_index == 0) & (drop_index_labels == 0)
             ]  # dropping values
             labels = labels[
                 (drop_index == 0) & (drop_index_labels == 0)
             ]  # assuming the labels depend entirely on the dataframe here.
+            self.train_dates = dates[
+                (drop_index == 0) & (drop_index_labels == 0)
+            ]
             logger.info(
                 f"dropped {len(unfiltered_dataframe) - len(filtered_dataframe)} training points"
                 f" due to NaNs in populated dataset {len(unfiltered_dataframe)}."
@@ -267,6 +268,7 @@ class FreqaiDataKitchen:
             "test_labels": test_labels,
             "train_weights": train_weights,
             "test_weights": test_weights,
+            "train_dates": self.train_dates
         }
 
         return self.data_dictionary
@@ -320,8 +322,7 @@ class FreqaiDataKitchen:
         """
         Normalize a set of data using the mean and standard deviation from
         the associated training data.
-        :params:
-        :df: Dataframe to be standardized
+        :param df: Dataframe to be standardized
         """
 
         for item in df.keys():
@@ -338,12 +339,11 @@ class FreqaiDataKitchen:
         """
         Normalize a set of data using the mean and standard deviation from
         the associated training data.
-        :params:
-        :df: Dataframe of predictions to be denormalized
+        :param df: Dataframe of predictions to be denormalized
         """
 
-        for label in self.label_list:
-            if df[label].dtype == object:
+        for label in df.columns:
+            if df[label].dtype == object or label in self.unique_class_list:
                 continue
             df[label] = (
                 (df[label] + 1)
@@ -354,7 +354,7 @@ class FreqaiDataKitchen:
         return df
 
     def split_timerange(
-        self, tr: str, train_split: int = 28, bt_split: int = 7
+        self, tr: str, train_split: int = 28, bt_split: float = 7
     ) -> Tuple[list, list]:
         """
         Function which takes a single time range (tr) and splits it
@@ -362,12 +362,12 @@ class FreqaiDataKitchen:
         tr: str, full timerange to train on
         train_split: the period length for the each training (days). Specified in user
         configuration file
-        bt_split: the backtesting length (dats). Specified in user configuration file
+        bt_split: the backtesting length (days). Specified in user configuration file
         """
 
         if not isinstance(train_split, int) or train_split < 1:
             raise OperationalException(
-                "train_period_days must be an integer greater than 0. " f"Got {train_split}."
+                f"train_period_days must be an integer greater than 0. Got {train_split}."
             )
         train_period_days = train_split * SECONDS_IN_DAY
         bt_period = bt_split * SECONDS_IN_DAY
@@ -389,7 +389,7 @@ class FreqaiDataKitchen:
 
         while True:
             if not first:
-                timerange_train.startts = timerange_train.startts + bt_period
+                timerange_train.startts = timerange_train.startts + int(bt_period)
             timerange_train.stopts = timerange_train.startts + train_period_days
 
             first = False
@@ -402,7 +402,7 @@ class FreqaiDataKitchen:
 
             timerange_backtest.startts = timerange_train.stopts
 
-            timerange_backtest.stopts = timerange_backtest.startts + bt_period
+            timerange_backtest.stopts = timerange_backtest.startts + int(bt_period)
 
             if timerange_backtest.stopts > config_timerange.stopts:
                 timerange_backtest.stopts = config_timerange.stopts
@@ -423,10 +423,9 @@ class FreqaiDataKitchen:
     def slice_dataframe(self, timerange: TimeRange, df: DataFrame) -> DataFrame:
         """
         Given a full dataframe, extract the user desired window
-        :params:
-        :tr: timerange string that we wish to extract from df
-        :df: Dataframe containing all candles to run the entire backtest. Here
-        it is sliced down to just the present training period.
+        :param tr: timerange string that we wish to extract from df
+        :param df: Dataframe containing all candles to run the entire backtest. Here
+                   it is sliced down to just the present training period.
         """
 
         start = datetime.datetime.fromtimestamp(timerange.startts, tz=datetime.timezone.utc)
@@ -536,9 +535,7 @@ class FreqaiDataKitchen:
             do_predict = np.where(y_pred == -1, 0, y_pred)
 
             if (len(do_predict) - do_predict.sum()) > 0:
-                logger.info(
-                    f"SVM tossed {len(do_predict) - do_predict.sum()} predictions."
-                )
+                logger.info(f"SVM tossed {len(do_predict) - do_predict.sum()} predictions.")
             self.do_predict += do_predict
             self.do_predict -= 1
 
@@ -568,6 +565,8 @@ class FreqaiDataKitchen:
             )
 
             # same for test data
+            # TODO: This (and the part above) could be refactored into a separate function
+            # to reduce code duplication
             if self.freqai_config['data_split_parameters'].get('test_size', 0.1) != 0:
                 y_pred = self.svm_model.predict(self.data_dictionary["test_features"])
                 dropped_points = np.where(y_pred == -1, 0, y_pred)
@@ -604,17 +603,14 @@ class FreqaiDataKitchen:
             pred_ft_df = self.data_dictionary['prediction_features']
             num_preds = len(pred_ft_df)
             df = pd.concat([train_ft_df, pred_ft_df], axis=0, ignore_index=True)
-            clustering = DBSCAN(
-                                    eps=self.data['DBSCAN_eps'],
-                                    min_samples=self.data['DBSCAN_min_samples'],
-                                    n_jobs=self.thread_count
+            clustering = DBSCAN(eps=self.data['DBSCAN_eps'],
+                                min_samples=self.data['DBSCAN_min_samples'],
+                                n_jobs=self.thread_count
                                 ).fit(df)
             do_predict = np.where(clustering.labels_[-num_preds:] == -1, 0, 1)
 
             if (len(do_predict) - do_predict.sum()) > 0:
-                logger.info(
-                    f"DBSCAN tossed {len(do_predict) - do_predict.sum()} predictions"
-                )
+                logger.info(f"DBSCAN tossed {len(do_predict) - do_predict.sum()} predictions")
             self.do_predict += do_predict
             self.do_predict -= 1
 
@@ -662,9 +658,8 @@ class FreqaiDataKitchen:
     def find_features(self, dataframe: DataFrame) -> None:
         """
         Find features in the strategy provided dataframe
-        :params:
-        dataframe: DataFrame = strategy provided dataframe
-        :returns:
+        :param dataframe: DataFrame = strategy provided dataframe
+        :return:
         features: list = the features to be used for training/prediction
         """
         column_names = dataframe.columns
@@ -716,14 +711,16 @@ class FreqaiDataKitchen:
         weights = np.exp(-np.arange(num_weights) / (wfactor * num_weights))[::-1]
         return weights
 
-    def append_predictions(self, predictions, do_predict, len_dataframe):
+    def append_predictions(self, predictions: DataFrame, do_predict: npt.ArrayLike) -> None:
         """
         Append backtest prediction from current backtest period to all previous periods
         """
 
         append_df = DataFrame()
-        for label in self.label_list:
+        for label in predictions.columns:
             append_df[label] = predictions[label]
+            if append_df[label].dtype == object:
+                continue
             append_df[f"{label}_mean"] = self.data["labels_mean"][label]
             append_df[f"{label}_std"] = self.data["labels_std"][label]
 
@@ -770,7 +767,7 @@ class FreqaiDataKitchen:
 
         if backtest_timerange.stopts == 0:
             # typically open ended time ranges do work, however, there are some edge cases where
-            # it does not. accomodating these kinds of edge cases just to allow open-ended
+            # it does not. accommodating these kinds of edge cases just to allow open-ended
             # timerange is not high enough priority to warrant the effort. It is safer for now
             # to simply ask user to add their end date
             raise OperationalException("FreqAI backtesting does not allow open ended timeranges. "
@@ -806,10 +803,9 @@ class FreqaiDataKitchen:
         """
         A model age checker to determine if the model is trustworthy based on user defined
         `expiration_hours` in the configuration file.
-        :params:
-        trained_timestamp: int = The time of training for the most recent model.
-        :returns:
-        bool = If the model is expired or not.
+        :param trained_timestamp: int = The time of training for the most recent model.
+        :return:
+            bool = If the model is expired or not.
         """
         time = datetime.datetime.now(tz=datetime.timezone.utc).timestamp()
         elapsed_time = (time - trained_timestamp) / 3600  # hours
@@ -827,30 +823,21 @@ class FreqaiDataKitchen:
         trained_timerange = TimeRange()
         data_load_timerange = TimeRange()
 
-        # find the max indicator length required
-        max_timeframe_chars = self.freqai_config["feature_parameters"].get(
-            "include_timeframes"
-        )[-1]
-        max_period = self.freqai_config["feature_parameters"].get(
-            "indicator_max_period_candles", 50
-        )
-        additional_seconds = 0
-        if max_timeframe_chars[-1] == "d":
-            additional_seconds = max_period * SECONDS_IN_DAY * int(max_timeframe_chars[-2])
-        elif max_timeframe_chars[-1] == "h":
-            additional_seconds = max_period * 3600 * int(max_timeframe_chars[-2])
-        elif max_timeframe_chars[-1] == "m":
-            if len(max_timeframe_chars) == 2:
-                additional_seconds = max_period * 60 * int(max_timeframe_chars[-2])
-            elif len(max_timeframe_chars) == 3:
-                additional_seconds = max_period * 60 * int(float(max_timeframe_chars[0:2]))
-            else:
-                logger.warning(
-                    "FreqAI could not detect max timeframe and therefore may not "
-                    "download the proper amount of data for training"
-                )
+        timeframes = self.freqai_config["feature_parameters"].get("include_timeframes")
 
-        # logger.info(f'Extending data download by {additional_seconds/SECONDS_IN_DAY:.2f} days')
+        max_tf_seconds = 0
+        for tf in timeframes:
+            secs = timeframe_to_seconds(tf)
+            if secs > max_tf_seconds:
+                max_tf_seconds = secs
+
+        # We notice that users like to use exotic indicators where
+        # they do not know the required timeperiod. Here we include a factor
+        # of safety by multiplying the user considered "max" by 2.
+        max_period = self.freqai_config["feature_parameters"].get(
+            "indicator_max_period_candles", 20
+        ) * 2
+        additional_seconds = max_period * max_tf_seconds
 
         if trained_timestamp != 0:
             elapsed_time = (time - trained_timestamp) / SECONDS_IN_HOUR
@@ -871,7 +858,7 @@ class FreqaiDataKitchen:
                 data_load_timerange.stopts = int(time)
         else:  # user passed no live_trained_timerange in config
             trained_timerange.startts = int(
-                time - self.freqai_config.get("train_period_days") * SECONDS_IN_DAY
+                time - self.freqai_config.get("train_period_days", 0) * SECONDS_IN_DAY
             )
             trained_timerange.stopts = int(time)
 
@@ -902,22 +889,20 @@ class FreqaiDataKitchen:
 
         self.model_filename = f"cb_{coin.lower()}_{int(trained_timerange.stopts)}"
 
-    def download_all_data_for_training(self, timerange: TimeRange) -> None:
+    def download_all_data_for_training(self, timerange: TimeRange, dp: DataProvider) -> None:
         """
         Called only once upon start of bot to download the necessary data for
         populating indicators and training the model.
-        :params:
-        timerange: TimeRange = The full data timerange for populating the indicators
-        and training the model.
+        :param timerange: TimeRange = The full data timerange for populating the indicators
+                                      and training the model.
+        :param dp: DataProvider instance attached to the strategy
         """
-        exchange = ExchangeResolver.load_exchange(
-            self.config["exchange"]["name"], self.config, validate=False, load_leverage_tiers=False
-        )
-
         new_pairs_days = int((timerange.stopts - timerange.startts) / SECONDS_IN_DAY)
-
+        if not dp._exchange:
+            # Not realistic - this is only called in live mode.
+            raise OperationalException("Dataprovider did not have an exchange attached.")
         refresh_backtest_ohlcv_data(
-            exchange,
+            dp._exchange,
             pairs=self.all_pairs,
             timeframes=self.freqai_config["feature_parameters"].get("include_timeframes"),
             datadir=self.config["datadir"],
@@ -928,8 +913,6 @@ class FreqaiDataKitchen:
             trading_mode=self.config.get("trading_mode", "spot"),
             prepend=self.config.get("prepend_data", False),
         )
-
-        exchange.close()
 
     def set_all_pairs(self) -> None:
 
@@ -1000,6 +983,8 @@ class FreqaiDataKitchen:
                         informative=corr_dataframes[i][tf]
                     )
 
+        self.get_unique_classes_from_labels(dataframe)
+
         return dataframe
 
     def fit_labels(self) -> None:
@@ -1009,19 +994,16 @@ class FreqaiDataKitchen:
         import scipy as spy
 
         self.data["labels_mean"], self.data["labels_std"] = {}, {}
-        for label in self.label_list:
+        for label in self.data_dictionary["train_labels"].columns:
             if self.data_dictionary["train_labels"][label].dtype == object:
                 continue
             f = spy.stats.norm.fit(self.data_dictionary["train_labels"][label])
             self.data["labels_mean"][label], self.data["labels_std"][label] = f[0], f[1]
 
-        # KEEPME incase we want to let user start to grab quantiles.
-        # upper_q = spy.stats.norm.ppf(self.freqai_config['feature_parameters'][
-        #                                                   'target_quantile'], *f)
-        # lower_q = spy.stats.norm.ppf(1 - self.freqai_config['feature_parameters'][
-        #                                                       'target_quantile'], *f)
-        # self.data["upper_quantile"] = upper_q
-        # self.data["lower_quantile"] = lower_q
+        # incase targets are classifications
+        for label in self.unique_class_list:
+            self.data["labels_mean"][label], self.data["labels_std"][label] = 0, 0
+
         return
 
     def remove_features_from_df(self, dataframe: DataFrame) -> DataFrame:
@@ -1034,180 +1016,14 @@ class FreqaiDataKitchen:
         ]
         return dataframe[to_keep]
 
-    def get_current_trade_database(self) -> None:
+    def get_unique_classes_from_labels(self, dataframe: DataFrame) -> None:
 
-        if self.database_path is None:
-            logger.warning('No trade database found. Skipping analysis.')
-            return
+        self.find_features(dataframe)
 
-        data = sqlite3.connect(self.database_name)
-        query = data.execute("SELECT * From trades")
-        cols = [column[0] for column in query.description]
-        df = pd.DataFrame.from_records(data=query.fetchall(), columns=cols)
-        self.trade_database_df = df.dropna(subset='close_date')
-        data.close()
+        for key in self.label_list:
+            if dataframe[key].dtype == object:
+                self.unique_classes[key] = dataframe[key].dropna().unique()
 
-    def np_encoder(self, object):
-        if isinstance(object, np.generic):
-            return object.item()
-
-    # Functions containing useful data manpulation examples. but not actively in use.
-
-    # Possibly phasing these outlier removal methods below out in favor of
-    # use_SVM_to_remove_outliers (computationally more efficient and apparently higher performance).
-    # But these have good data manipulation examples, so keep them commented here for now.
-
-    # def determine_statistical_distributions(self) -> None:
-    #     from fitter import Fitter
-
-    #     logger.info('Determining best model for all features, may take some time')
-
-    #     def compute_quantiles(ft):
-    #         f = Fitter(self.data_dictionary["train_features"][ft],
-    #                    distributions=['gamma', 'cauchy', 'laplace',
-    #                                   'beta', 'uniform', 'lognorm'])
-    #         f.fit()
-    #         # f.summary()
-    #         dist = list(f.get_best().items())[0][0]
-    #         params = f.get_best()[dist]
-    #         upper_q = getattr(spy.stats, list(f.get_best().items())[0][0]).ppf(0.999, **params)
-    #         lower_q = getattr(spy.stats, list(f.get_best().items())[0][0]).ppf(0.001, **params)
-
-    #         return ft, upper_q, lower_q, dist
-
-    #     quantiles_tuple = Parallel(n_jobs=-1)(
-    #         delayed(compute_quantiles)(ft) for ft in self.data_dictionary[
-    #                                                       'train_features'].columns)
-
-    #     df = pd.DataFrame(quantiles_tuple, columns=['features', 'upper_quantiles',
-    #                                                 'lower_quantiles', 'dist'])
-    #     self.data_dictionary['upper_quantiles'] = df['upper_quantiles']
-    #     self.data_dictionary['lower_quantiles'] = df['lower_quantiles']
-
-    #     return
-
-    # def remove_outliers(self, predict: bool) -> None:
-    #     """
-    #     Remove data that looks like an outlier based on the distribution of each
-    #     variable.
-    #     :params:
-    #     :predict: boolean which tells the function if this is prediction data or
-    #     training data coming in.
-    #     """
-
-    #     lower_quantile = self.data_dictionary["lower_quantiles"].to_numpy()
-    #     upper_quantile = self.data_dictionary["upper_quantiles"].to_numpy()
-
-    #     if predict:
-
-    #         df = self.data_dictionary["prediction_features"][
-    #             (self.data_dictionary["prediction_features"] < upper_quantile)
-    #             & (self.data_dictionary["prediction_features"] > lower_quantile)
-    #         ]
-    #         drop_index = pd.isnull(df).any(1)
-    #         self.data_dictionary["prediction_features"].fillna(0, inplace=True)
-    #         drop_index = ~drop_index
-    #         do_predict = np.array(drop_index.replace(True, 1).replace(False, 0))
-
-    #         logger.info(
-    #             "remove_outliers() tossed %s predictions",
-    #             len(do_predict) - do_predict.sum(),
-    #         )
-    #         self.do_predict += do_predict
-    #         self.do_predict -= 1
-
-    #     else:
-
-    #         filter_train_df = self.data_dictionary["train_features"][
-    #             (self.data_dictionary["train_features"] < upper_quantile)
-    #             & (self.data_dictionary["train_features"] > lower_quantile)
-    #         ]
-    #         drop_index = pd.isnull(filter_train_df).any(1)
-    #         drop_index = drop_index.replace(True, 1).replace(False, 0)
-    #         self.data_dictionary["train_features"] = self.data_dictionary["train_features"][
-    #             (drop_index == 0)
-    #         ]
-    #         self.data_dictionary["train_labels"] = self.data_dictionary["train_labels"][
-    #             (drop_index == 0)
-    #         ]
-    #         self.data_dictionary["train_weights"] = self.data_dictionary["train_weights"][
-    #             (drop_index == 0)
-    #         ]
-
-    #         logger.info(
-    #             f'remove_outliers() tossed {drop_index.sum()}'
-    #             f' training points from {len(filter_train_df)}'
-    #         )
-
-    #         # do the same for the test data
-    #         filter_test_df = self.data_dictionary["test_features"][
-    #             (self.data_dictionary["test_features"] < upper_quantile)
-    #             & (self.data_dictionary["test_features"] > lower_quantile)
-    #         ]
-    #         drop_index = pd.isnull(filter_test_df).any(1)
-    #         drop_index = drop_index.replace(True, 1).replace(False, 0)
-    #         self.data_dictionary["test_labels"] = self.data_dictionary["test_labels"][
-    #             (drop_index == 0)
-    #         ]
-    #         self.data_dictionary["test_features"] = self.data_dictionary["test_features"][
-    #             (drop_index == 0)
-    #         ]
-    #         self.data_dictionary["test_weights"] = self.data_dictionary["test_weights"][
-    #             (drop_index == 0)
-    #         ]
-
-    #         logger.info(
-    #             f'remove_outliers() tossed {drop_index.sum()}'
-    #             f' test points from {len(filter_test_df)}'
-    #         )
-
-    #     return
-
-    # def standardize_data(self, data_dictionary: Dict) -> Dict[Any, Any]:
-    #     """
-    #     standardize all data in the data_dictionary according to the training dataset
-    #     :params:
-    #     :data_dictionary: dictionary containing the cleaned and split training/test data/labels
-    #     :returns:
-    #     :data_dictionary: updated dictionary with standardized values.
-    #     """
-    #     # standardize the data by training stats
-    #     train_mean = data_dictionary["train_features"].mean()
-    #     train_std = data_dictionary["train_features"].std()
-    #     data_dictionary["train_features"] = (
-    #         data_dictionary["train_features"] - train_mean
-    #     ) / train_std
-    #     data_dictionary["test_features"] = (
-    #         data_dictionary["test_features"] - train_mean
-    #     ) / train_std
-
-    #     train_labels_std = data_dictionary["train_labels"].std()
-    #     train_labels_mean = data_dictionary["train_labels"].mean()
-    #     data_dictionary["train_labels"] = (
-    #         data_dictionary["train_labels"] - train_labels_mean
-    #     ) / train_labels_std
-    #     data_dictionary["test_labels"] = (
-    #         data_dictionary["test_labels"] - train_labels_mean
-    #     ) / train_labels_std
-
-    #     for item in train_std.keys():
-    #         self.data[item + "_std"] = train_std[item]
-    #         self.data[item + "_mean"] = train_mean[item]
-
-    #     self.data["labels_std"] = train_labels_std
-    #     self.data["labels_mean"] = train_labels_mean
-
-    #     return data_dictionary
-
-    # def standardize_data_from_metadata(self, df: DataFrame) -> DataFrame:
-    # """
-    # Normalizes a set of data using the mean and standard deviation from
-    # the associated training data.
-    # :params:
-    # :df: Dataframe to be standardized
-    # """
-
-    # for item in df.keys():
-    #     df[item] = (df[item] - self.data[item + "_mean"]) / self.data[item + "_std"]
-
-    # return df
+        if self.unique_classes:
+            for label in self.unique_classes:
+                self.unique_class_list += list(self.unique_classes[label])
