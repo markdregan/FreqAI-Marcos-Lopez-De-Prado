@@ -5,7 +5,6 @@ import numpy.typing as npt
 import pandas as pd
 import time
 
-# from imblearn.combine import SMOTEENN
 from catboost import CatBoostClassifier, EShapCalcType, EFeaturesSelectionAlgorithm, Pool, EFstrType
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
@@ -135,8 +134,8 @@ class LitmusOneClassifier(IFreqaiModel):
         all_feature_names = np.arange(len(X_train.columns))
         clf.select_features(
             X=train_data, eval_set=eval_data, num_features_to_select=500,
-            features_for_select=all_feature_names, steps=3,
-            algorithm=EFeaturesSelectionAlgorithm.RecursiveByPredictionValuesChange,
+            features_for_select=all_feature_names, steps=2,
+            algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
             shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=False)
         end_time = time.time() - start_time
         dk.data['extra_returns_per_train']["time_to_train"] = end_time

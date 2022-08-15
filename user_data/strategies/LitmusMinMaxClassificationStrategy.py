@@ -174,8 +174,8 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 df["%-hour_of_day"] = df["date"].dt.hour
 
                 # Define Min & Max binary indicators
-                min_peaks = argrelextrema(df["close"].values, np.less, order=10)[0]
-                max_peaks = argrelextrema(df["close"].values, np.greater, order=10)[0]
+                min_peaks = argrelextrema(df["close"].values, np.less, order=15)[0]
+                max_peaks = argrelextrema(df["close"].values, np.greater, order=15)[0]
 
                 df["&target"] = 'not_minmax'
                 df["real-minima"] = 0
