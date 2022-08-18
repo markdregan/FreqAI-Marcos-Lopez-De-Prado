@@ -109,19 +109,23 @@ def tripple_barrier(df_col, upper_pct, lower_pct):
     lower_threshold = initial_value * (1 - lower_pct)
 
     # Get index position of first time upper & lower are crossed
-    upper_idx = (df_col > upper_threshold).argmax() if (df_col > upper_threshold).any() else 999
-    lower_idx = (df_col < lower_threshold).argmax() if (df_col < lower_threshold).any() else 999
+    upper_idx = (df_col > upper_threshold).argmax() if (df_col > upper_threshold).any() else 9999
+    lower_idx = (df_col < lower_threshold).argmax() if (df_col < lower_threshold).any() else 9999
 
     # Based on first crossing, assign appropriate label
-    barrier = np.where(upper_idx < lower_idx, 1, np.NaN)
-    barrier = np.where(lower_idx < upper_idx, -1, barrier)
-    barrier = np.where(np.isnan(barrier), 0, barrier)
+    if upper_idx < lower_idx:
+        barrier = 1
+    elif lower_idx < upper_idx:
+        barrier = 2
+    else:
+        barrier = 3
 
     return barrier
 
 
 def max_extreme_value(df_col):
     """Identify max extreme value over future window and return value"""
+
     initial_value = df_col.iat[0]
     df_norm = df_col - initial_value
 

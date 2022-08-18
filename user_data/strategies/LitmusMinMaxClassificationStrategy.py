@@ -1,10 +1,11 @@
 
-from freqtrade.persistence import Trade
+# from freqtrade.persistence import Trade
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy, merge_informative_pair
 from functools import reduce
 from pandas import DataFrame
 from scipy.signal import argrelextrema
 from technical import qtpylib
+from user_data.litmus import indicator_helpers
 
 import logging
 import numpy as np
@@ -35,19 +36,30 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             },
             "Maxima": {
                 "is_maxima": {"color": "CornflowerBlue"},
+                "missed_maxima": {"color": "Plum"},
                 "long_exit_target": {"color": "FireBrick"},
                 "short_entry_target": {"color": "DarkOliveGreen"},
-                "missed_maxima": {"color": "LightPink"}
             },
             "Minima": {
                 "is_minima": {"color": "CornflowerBlue"},
+                "missed_minima": {"color": "Plum"},
                 "long_entry_target": {"color": "DarkOliveGreen"},
                 "short_exit_target": {"color": "FireBrick"},
-                "missed_minima": {"color": "LightPink"}
+            },
+            "Thrust": {
+                "upper": {"color": "CornflowerBlue"},
+                "lower": {"color": "DarkOliveGreen"},
+                "vertical": {"color": "FireBrick"}
             },
             "Real": {
                 "real-minima": {"color": "blue"},
                 "real-maxima": {"color": "yellow"}
+            },
+            "Prec": {
+                "pr_auc_is_minima": {"color": "Thistle"},
+                "pr_auc_is_maxima": {"color": "SteelBlue"},
+                "pr_auc_upper": {"color": "Wheat"},
+                "pr_auc_lower": {"color": "Plum"}
             },
         },
     }
@@ -94,92 +106,118 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         coin = pair.split('/')[0]
 
-        with self.freqai.lock:
-            if informative is None:
-                informative = self.dp.get_pair_dataframe(pair, tf)
+        if informative is None:
+            informative = self.dp.get_pair_dataframe(pair, tf)
 
-            # first loop is automatically duplicating indicators for time periods
-            for t in self.freqai_info["feature_parameters"]["indicator_periods_candles"]:
+        # first loop is automatically duplicating indicators for time periods
+        for t in self.freqai_info["feature_parameters"]["indicator_periods_candles"]:
 
-                t = int(t)
-                informative[f"%-{coin}rsi-period_{t}"] = ta.RSI(informative, timeperiod=t)
-                informative[f"%-{coin}mfi-period_{t}"] = ta.MFI(informative, timeperiod=t)
-                informative[f"%-{coin}adx-period_{t}"] = ta.ADX(informative, window=t)
-                informative[f"{coin}sma-period_{t}"] = ta.SMA(informative, timeperiod=t)
-                informative[f"{coin}ema-period_{t}"] = ta.EMA(informative, timeperiod=t)
-                informative[f"%-{coin}close_over_sma-period_{t}"] = (
-                    informative["close"] / informative[f"{coin}sma-period_{t}"]
-                )
+            t = int(t)
+            informative[f"%-{coin}-rsi-period_{t}"] = ta.RSI(informative, timeperiod=t)
+            informative[f"%-{coin}-mfi-period_{t}"] = ta.MFI(informative, timeperiod=t)
+            informative[f"%-{coin}-adx-period_{t}"] = ta.ADX(informative, window=t)
+            informative[f"{coin}-sma-period_{t}"] = ta.SMA(informative, timeperiod=t)
+            informative[f"{coin}-ema-period_{t}"] = ta.EMA(informative, timeperiod=t)
+            informative[f"%-{coin}-close_over_sma-period_{t}"] = (
+                informative["close"] / informative[f"{coin}-sma-period_{t}"]
+            )
 
-                informative[f"%-{coin}mfi-period_{t}"] = ta.MFI(informative, timeperiod=t)
+            informative[f"%-{coin}-mfi-period_{t}"] = ta.MFI(informative, timeperiod=t)
 
-                bollinger = qtpylib.bollinger_bands(
-                    qtpylib.typical_price(informative), window=t, stds=2.2
-                )
-                informative[f"{coin}bb_lowerband-period_{t}"] = bollinger["lower"]
-                informative[f"{coin}bb_middleband-period_{t}"] = bollinger["mid"]
-                informative[f"{coin}bb_upperband-period_{t}"] = bollinger["upper"]
+            bollinger = qtpylib.bollinger_bands(
+                qtpylib.typical_price(informative), window=t, stds=2.2
+            )
+            informative[f"{coin}-bb_lowerband-period_{t}"] = bollinger["lower"]
+            informative[f"{coin}-bb_middleband-period_{t}"] = bollinger["mid"]
+            informative[f"{coin}-bb_upperband-period_{t}"] = bollinger["upper"]
 
-                informative[f"%-{coin}bb_width-period_{t}"] = (
-                    informative[f"{coin}bb_upperband-period_{t}"]
-                    - informative[f"{coin}bb_lowerband-period_{t}"]
-                ) / informative[f"{coin}bb_middleband-period_{t}"]
-                informative[f"%-{coin}close-bb_lower-period_{t}"] = (
-                    informative["close"] / informative[f"{coin}bb_lowerband-period_{t}"]
-                )
+            informative[f"%-{coin}-bb_width-period_{t}"] = (
+                informative[f"{coin}-bb_upperband-period_{t}"]
+                - informative[f"{coin}-bb_lowerband-period_{t}"]
+            ) / informative[f"{coin}-bb_middleband-period_{t}"]
+            informative[f"%-{coin}-close-bb_lower-period_{t}"] = (
+                informative["close"] / informative[f"{coin}-bb_lowerband-period_{t}"]
+            )
 
-                informative[f"%-{coin}roc-period_{t}"] = ta.ROC(informative, timeperiod=t)
+            informative[f"%-{coin}-roc-period_{t}"] = ta.ROC(informative, timeperiod=t)
 
-                informative[f"%-{coin}relative_volume-period_{t}"] = (
-                    informative["volume"] / informative["volume"].rolling(t).mean()
-                )
+            informative[f"%-{coin}-relative_volume-period_{t}"] = (
+                informative["volume"] / informative["volume"].rolling(t).mean()
+            )
 
-            informative[f"%-{coin}pct-change"] = informative["close"].pct_change()
-            informative[f"%-{coin}raw_volume"] = informative["volume"]
-            informative[f"%-{coin}raw_price"] = informative["close"]
+        informative[f"%-{coin}-pct-change"] = informative["close"].pct_change()
+        informative[f"%-{coin}-raw_volume"] = informative["volume"]
+        informative[f"%-{coin}-raw_price"] = informative["close"]
 
-            indicators = [col for col in informative if col.startswith("%")]
-            # This loop duplicates and shifts all indicators to add a sense of recency to data
-            for n in range(self.freqai_info["feature_parameters"]["include_shifted_candles"] + 1):
-                if n == 0:
-                    continue
-                informative_shift = informative[indicators].shift(n)
-                informative_shift = informative_shift.add_suffix("_shift-" + str(n))
-                informative = pd.concat((informative, informative_shift), axis=1)
+        indicators = [col for col in informative if col.startswith("%")]
+        # This loop duplicates and shifts all indicators to add a sense of recency to data
+        for n in range(self.freqai_info["feature_parameters"]["include_shifted_candles"] + 1):
+            if n == 0:
+                continue
+            informative_shift = informative[indicators].shift(n)
+            informative_shift = informative_shift.add_suffix("_shift-" + str(n))
+            informative = pd.concat((informative, informative_shift), axis=1)
 
-            df = merge_informative_pair(df, informative, self.config["timeframe"], tf, ffill=True)
-            skip_columns = [
-                (s + "_" + tf) for s in ["date", "open", "high", "low", "close", "volume"]
-            ]
-            df = df.drop(columns=skip_columns)
+        df = merge_informative_pair(df, informative, self.config["timeframe"], tf, ffill=True)
+        skip_columns = [
+            (s + "_" + tf) for s in ["date", "open", "high", "low", "close", "volume"]
+        ]
+        df = df.drop(columns=skip_columns)
 
-            # Add generalized indicators here (because in live, it will call this
-            # function to populate indicators during training). Notice how we ensure not to
-            # add them multiple times.
-            if set_generalized_indicators:
-                df["%-day_of_week"] = df["date"].dt.dayofweek
-                df["%-hour_of_day"] = df["date"].dt.hour
+        # Add generalized indicators here (because in live, it will call this
+        # function to populate indicators during training). Notice how we ensure not to
+        # add them multiple times
+        if set_generalized_indicators:
+            df["%-day_of_week"] = df["date"].dt.dayofweek
+            df["%-hour_of_day"] = df["date"].dt.hour
 
-                # Define Min & Max binary indicators
-                min_peaks = argrelextrema(df["close"].values, np.less, order=20)
-                # max_peaks = argrelextrema(df["close"].values, np.greater, order=20)
+            # Define Min & Max binary indicators
+            min_peaks = argrelextrema(df["close"].values, np.less, order=15)[0]
+            max_peaks = argrelextrema(df["close"].values, np.greater, order=15)[0]
 
-                df["&target"] = 'not_minmax'
-                df["real-minima"] = 0
-                df["real-maxima"] = 0
+            df["&minmax-target"] = "not_minmax"
+            df["real-minima"] = 0
+            df["real-maxima"] = 0
 
-                for mp in min_peaks[0]:
-                    df.at[mp, "real-minima"] = 1
-                    df.at[mp, "&target"] = 'is_minima'
-                    """df.at[mp + 1, "&target"] = 'missed_minima'
+            # Minima
+            for mp in min_peaks:
+                df.at[mp, "real-minima"] = 1
+                df.at[mp, "&minmax-target"] = 'is_minima'
+                df.at[mp + 1, "&minmax-target"] = 'missed_minima'
+                df.at[mp + 2, "&minmax-target"] = 'missed_minima'
+                """for idx in [-2, -1, 1, 2]:
+                    try:
+                        if abs(df.at[mp + idx, "close"] / df.at[mp, "close"] - 1) < 0.005:
+                            df.at[mp + idx, "&minmax-target"] = "is_minima"
+                            df.at[mp + idx, "real-minima"] = 0.5
+                    except:
+                        logger.info("Out of bound index when smearing")"""
 
-                for mp in max_peaks[0]:
-                    df.at[mp, "real-maxima"] = 1
-                    df.at[mp, "&target"] = 'is_maxima'
-                    df.at[mp + 1, "&target"] = 'missed_maxima'
+            # Maxima
+            for mp in max_peaks:
+                df.at[mp, "real-maxima"] = 1
+                df.at[mp, "&minmax-target"] = "is_maxima"
+                df.at[mp + 1, "&minmax-target"] = 'missed_maxima'
+                df.at[mp + 2, "&minmax-target"] = 'missed_maxima'
+                """for idx in [-3, -2, -1, 1, 2, 3]:
+                    try:
+                        if abs(df.at[mp + idx, "close"] / df.at[mp, "close"] - 1) < 0.005:
+                            df.at[mp + idx, "&minmax-target"] = "is_maxima"
+                            df.at[mp + idx, "real-maxima"] = 0.5
+                    except:
+                        logger.info("Out of bound index when smearing")"""
 
-                # Create shifted target for predicting missing max/min
-                # Needs re-write df["&target"] = df["&target"].shift(2)"""
+            # Triple barrier for magnitude of change
+            params = {"upper_pct": 0.02, "lower_pct": 0.02}
+            df["&thrust"] = (
+                df["close"]
+                .shift(-self.freqai_info["feature_parameters"]["label_period_candles"])
+                .rolling(self.freqai_info["feature_parameters"]["label_period_candles"] + 1)
+                .apply(indicator_helpers.tripple_barrier, raw=False, kwargs=params)
+            )
+
+            lookup = {1: "upper", 2: "lower", 3: "vertical"}
+            df["&thrust"] = df["&thrust"].map(lookup)
 
         return df
 
@@ -197,84 +235,92 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         dataframe = self.freqai.start(dataframe, metadata, self)
 
-        # Standard deviation entry / exists
-        # entry_std = 1.4
-        # exit_std = 1.3
-
-        """# Compute mean and std for targets
-        threshold_window = 160
-        dataframe["is_maxima_mean"] = dataframe["is_maxima"].rolling(threshold_window).mean()
-        dataframe["is_maxima_std"] = dataframe["is_maxima"].rolling(threshold_window).std()
-        dataframe["is_minima_mean"] = dataframe["is_minima"].rolling(threshold_window).mean()
-        dataframe["is_minima_std"] = dataframe["is_minima"].rolling(threshold_window).std()
+        enter_mul = 1.5
+        exit_mul = 1.2
 
         # Short
         dataframe["short_entry_target"] = (
-                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * entry_std)
+                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * enter_mul)
         dataframe["short_exit_target"] = (
-                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * exit_std)
+                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * exit_mul)
+        dataframe["missed_short_entry_target"] = (
+                dataframe["missed_maxima_mean"] + dataframe["missed_maxima_std"] * enter_mul)
+        dataframe["missed_short_exit_target"] = (
+                dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * exit_mul)
 
         # Long
         dataframe["long_entry_target"] = (
-                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * entry_std)
+                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * enter_mul)
         dataframe["long_exit_target"] = (
-                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * exit_std)"""
+                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * exit_mul)
+        dataframe["missed_long_entry_target"] = (
+                dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * enter_mul)
+        dataframe["missed_long_exit_target"] = (
+                dataframe["missed_maxima_mean"] + dataframe["missed_maxima_std"] * exit_mul)
 
         return dataframe
 
     def populate_entry_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
-        enter_long_conditions = [1 == 1, df["is_minima"] > 0]
-
-        if enter_long_conditions:
+        # Long Entry
+        conditions = [df["do_predict"] == 1, df["is_minima"] > df["long_entry_target"]]
+        if conditions:
             df.loc[
-                reduce(lambda x, y: x & y, enter_long_conditions), ["enter_long", "enter_tag"]
-            ] = (1, "long")
+                reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
+            ] = (1, "is_minima")
 
-        enter_short_conditions = [1 == 1, df["is_minima"] > 0]
-
-        if enter_short_conditions:
+        # Missed Long Entry
+        conditions = [df["do_predict"] == 1, df["missed_minima"] > df["missed_long_entry_target"]]
+        if conditions:
             df.loc[
-                reduce(lambda x, y: x & y, enter_short_conditions), ["enter_short", "enter_tag"]
-            ] = (1, "short")
+                reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
+            ] = (1, "missed_minima")
 
-        """enter_long_conditions = [df["do_predict"] == 1, df["is_minima"] > df["long_entry_target"]]
-
-        if enter_long_conditions:
+        # Short Entry
+        conditions = [df["do_predict"] == 1, df["is_maxima"] > df["short_entry_target"]]
+        if conditions:
             df.loc[
-                reduce(lambda x, y: x & y, enter_long_conditions), ["enter_long", "enter_tag"]
-            ] = (1, "long")
+                reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
+            ] = (1, "is_maxima")
 
-        enter_short_conditions = [df["do_predict"] == 1, df["is_maxima"] > df["short_entry_target"]]
-
-        if enter_short_conditions:
+        # Missed Short Entry
+        conditions = [df["do_predict"] == 1, df["missed_maxima"] > df["missed_short_entry_target"]]
+        if conditions:
             df.loc[
-                reduce(lambda x, y: x & y, enter_short_conditions), ["enter_short", "enter_tag"]
-            ] = (1, "short")"""
+                reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
+            ] = (1, "missed_maxima")
 
         return df
 
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
-        exit_long_conditions = [1 == 1, df["is_minima"] > 0]
+        # Long Exit
+        conditions = [1 == 1, df["is_maxima"] > df["long_exit_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
+            ] = (1, "is_maxima")
 
-        if exit_long_conditions:
-            df.loc[reduce(lambda x, y: x & y, exit_long_conditions), "exit_long"] = 1
+        # Missed Long Exit
+        conditions = [1 == 1, df["missed_maxima"] > df["missed_long_exit_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
+            ] = (1, "missed_maxima")
 
-        exit_short_conditions = [1 == 1, df["is_minima"] > 0]
+        # Short Exit
+        conditions = [1 == 1, df["is_minima"] > df["short_exit_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
+            ] = (1, "is_minima")
 
-        if exit_short_conditions:
-            df.loc[reduce(lambda x, y: x & y, exit_short_conditions), "exit_short"] = 1
-
-        """exit_long_conditions = [1 == 1, df["is_maxima"] > df["long_exit_target"]]
-
-        if exit_long_conditions:
-            df.loc[reduce(lambda x, y: x & y, exit_long_conditions), "exit_long"] = 1
-
-        exit_short_conditions = [1 == 1, df["is_minima"] > df["short_exit_target"]]
-
-        if exit_short_conditions:
-            df.loc[reduce(lambda x, y: x & y, exit_short_conditions), "exit_short"] = 1"""
+        # Missed Short Exit
+        conditions = [1 == 1, df["missed_minima"] > df["missed_short_exit_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
+            ] = (1, "missed_minima")
 
         return df
 
@@ -321,7 +367,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             return "roi_custom_loss"
             """
 
-    def confirm_trade_exit(
+    """def confirm_trade_exit(
         self,
         pair: str,
         trade: Trade,
@@ -348,7 +394,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             else:
                 self.freqai.dd.save_follower_dict_to_disk()
 
-        return True
+        return True"""
 
     def confirm_trade_entry(
         self,
