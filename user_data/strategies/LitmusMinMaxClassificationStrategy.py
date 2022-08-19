@@ -47,9 +47,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "short_exit_target": {"color": "FireBrick"},
             },
             "Thrust": {
-                "upper": {"color": "CornflowerBlue"},
-                "lower": {"color": "DarkOliveGreen"},
-                "vertical": {"color": "FireBrick"}
+                "&close-roc": {"color": "DarkOliveGreen"}
             },
             "Real": {
                 "real-minima": {"color": "blue"},
@@ -185,13 +183,6 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 df.at[mp, "&minmax-target"] = 'is_minima'
                 df.at[mp + 1, "&minmax-target"] = 'missed_minima'
                 df.at[mp + 2, "&minmax-target"] = 'missed_minima'
-                """for idx in [-2, -1, 1, 2]:
-                    try:
-                        if abs(df.at[mp + idx, "close"] / df.at[mp, "close"] - 1) < 0.005:
-                            df.at[mp + idx, "&minmax-target"] = "is_minima"
-                            df.at[mp + idx, "real-minima"] = 0.5
-                    except:
-                        logger.info("Out of bound index when smearing")"""
 
             # Maxima
             for mp in max_peaks:
@@ -199,13 +190,6 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 df.at[mp, "&minmax-target"] = "is_maxima"
                 df.at[mp + 1, "&minmax-target"] = 'missed_maxima'
                 df.at[mp + 2, "&minmax-target"] = 'missed_maxima'
-                """for idx in [-3, -2, -1, 1, 2, 3]:
-                    try:
-                        if abs(df.at[mp + idx, "close"] / df.at[mp, "close"] - 1) < 0.005:
-                            df.at[mp + idx, "&minmax-target"] = "is_maxima"
-                            df.at[mp + idx, "real-maxima"] = 0.5
-                    except:
-                        logger.info("Out of bound index when smearing")"""
 
             # Triple barrier for magnitude of change
             params = {"upper_pct": 0.02, "lower_pct": 0.02}
@@ -218,6 +202,16 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
             lookup = {1: "upper", 2: "lower", 3: "vertical"}
             df["&thrust"] = df["&thrust"].map(lookup)
+
+            """# Regression Target
+            df["&close-roc"] = (
+                df["close"]
+                .shift(-self.freqai_info["feature_parameters"]["label_period_candles"])
+                .rolling(self.freqai_info["feature_parameters"]["label_period_candles"] + 1)
+                .mean()
+                / df["close"]
+                - 1
+            )"""
 
         return df
 

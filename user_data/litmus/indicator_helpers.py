@@ -130,6 +130,6 @@ def max_extreme_value(df_col):
     df_norm = df_col - initial_value
 
     # Get index position of first time upper & lower are crossed
-    max_idx = df_norm.abs().argmax()
+    idx = df_norm.abs().argmax()
 
-    return df_col.values[max_idx]
+    return df_col.values[idx]

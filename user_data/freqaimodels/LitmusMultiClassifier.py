@@ -111,6 +111,7 @@ class LitmusMultiClassifier(IFreqaiModel):
         all the training and test data/labels.
         """
 
+        start_time = time.time()
         models = []
         for t in data_dictionary["train_labels"].columns:
             # Swap train and test data
@@ -119,46 +120,31 @@ class LitmusMultiClassifier(IFreqaiModel):
             X_test = data_dictionary["train_features"]
             y_test = data_dictionary["train_labels"][t]
 
-            # Focus on max/min areas for classifying thrust
-            if t == "&thrust":
-                old_y_train = data_dictionary["test_labels"]["&minmax-target"]
-                old_y_test = data_dictionary["train_labels"]["&minmax-target"]
-                X_train = X_train[old_y_train.isin(["is_minima", "is_maxima"])]
-                y_train = y_train[old_y_train.isin(["is_minima", "is_maxima"])]
-                X_test = X_test[old_y_test.isin(["is_minima", "is_maxima"])]
-                y_test = y_test[old_y_test.isin(["is_minima", "is_maxima"])]
-
-            logger.info(f"{t} - Size of train and test labels: {y_train.shape}, {y_test.shape}")
-
             # Address class imbalance
             smote = SMOTE()
-            X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
+            X_train, y_train = smote.fit_resample(X_train, y_train)
 
             # Create Pool objs for catboost
-            train_data = Pool(data=X_train_res, label=y_train_res)
+            train_data = Pool(data=X_train, label=y_train)
             eval_data = Pool(data=X_test, label=y_test)
 
-            clf = CatBoostClassifier(
+            model = CatBoostClassifier(
                 iterations=1000, loss_function="MultiClass", allow_writing_files=False,
-                early_stopping_rounds=20, task_type="CPU", verbose=False)
+                early_stopping_rounds=30, task_type="CPU", verbose=False)
 
             # Feature selection & training
-            start_time = time.time()
             all_feature_names = np.arange(len(X_train.columns))
-            clf.select_features(
+            model.select_features(
                 X=train_data, eval_set=eval_data, num_features_to_select=500,
                 features_for_select=all_feature_names, steps=2,
                 algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
                 shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=False)
-            end_time = time.time() - start_time
-            dk.data['extra_returns_per_train']["time_to_train"] = end_time
-            logger.info(f"Time taken to select best features & train model: {end_time} seconds")
 
             # Model performance metrics
             encoder = LabelBinarizer()
             encoder.fit(y_train)
             y_test_enc = encoder.transform(y_test)
-            y_pred_proba = clf.predict_proba(X_test)
+            y_pred_proba = model.predict_proba(X_test)
 
             # Model performance metrics
             for i, c in enumerate(encoder.classes_):
@@ -171,8 +157,12 @@ class LitmusMultiClassifier(IFreqaiModel):
                 # dk.data['extra_returns_per_train'][f"pr_auc_{c}"] = pr_auc
                 logger.info(f"{c} - PR AUC score: {pr_auc}")
 
-            models.append(clf)
+            models.append(model)
 
         model = MergedModel(models)
+
+        end_time = time.time() - start_time
+        dk.data['extra_returns_per_train']["time_to_train"] = end_time
+        logger.info(f"Time taken to select best features & train model: {end_time} seconds")
 
         return model
