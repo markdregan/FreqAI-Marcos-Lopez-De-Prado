@@ -1,0 +1,123 @@
+{
+    "trading_mode": "futures",
+    "margin_mode": "isolated",
+    "max_open_trades": 10,
+    "stake_currency": "USDT",
+    "stake_amount": "unlimited",
+    "tradable_balance_ratio": 1,
+    "fiat_display_currency": "USD",
+    "dry_run": true,
+    "timeframe": "3m",
+    "dry_run_wallet": 50000,
+    "process_only_new_candles": true,
+    "cancel_open_orders_on_exit": true,
+    "unfilledtimeout": {
+        "entry": 10,
+        "exit": 30
+    },
+    "exchange": {
+        "name": "binance",
+        "key": "jQ93pEoaMuo2do5FfWUewC6QRH8Hu3hG7YE9TBu4ws9WcWg9tc8GTJTRFjkNLDxF",
+        "secret": "Dgb0W2sEb4jh0Hya9WxFHAVNky1Ozu2rHBAk8IljxVEOP3jvdnD1ylv531flI3Sk",
+        "ccxt_config": {
+            "enableRateLimit": true
+        },
+        "ccxt_async_config": {
+            "enableRateLimit": true,
+            "rateLimit": 200
+        },
+        "pair_whitelist": [
+	        "1INCH/USDT",
+	        "AAVE/USDT"
+        ],
+        "pair_blacklist": []
+    },
+    "entry_pricing": {
+        "price_side": "same",
+        "use_order_book": true,
+        "order_book_top": 1,
+        "price_last_balance": 0.0,
+        "check_depth_of_market": {
+            "enabled": false,
+            "bids_to_ask_delta": 1
+        }
+    },
+    "exit_pricing": {
+        "price_side": "other",
+        "use_order_book": true,
+        "order_book_top": 1
+    },
+    "pairlists": [
+        {
+            "method": "StaticPairList"
+        }
+    ],
+    "freqai": {
+        "enabled": true,
+        "startup_candles": 10000,
+        "purge_old_models": true,
+        "train_period_days": 20,
+        "backtest_period_days": 2,
+        "live_retrain_hours": 0.25,
+        "fit_live_predictions_candles": 200,
+        "identifier": "Litmus-01",
+        "classifier": true,
+        "live_trained_timestamp": 0,
+        "feature_parameters": {
+            "include_timeframes": [
+                "3m",
+                "15m",
+                "1h"
+            ],
+            "include_corr_pairlist": [
+                "BTC/USDT",
+                "ETH/USDT"
+            ],
+            "label_period_candles": 80,
+            "include_shifted_candles": 2,
+            "DI_threshold": 0.9,
+            "weight_factor": 0.9,
+            "principal_component_analysis": false,
+            "use_SVM_to_remove_outliers": true,
+            "stratify_training_data": 0,
+            "indicator_max_period_candles": 100,
+            "indicator_periods_candles": [10, 20, 50, 100]
+        },
+        "data_split_parameters": {
+            "test_size": 0.3,
+            "shuffle": false
+        },
+        "model_training_parameters": {
+            "n_estimators": 2000,
+            "task_type": "CPU",
+            "verbose": false,
+            "early_stopping_rounds": 20
+        },
+        "extra_returns_per_train": {"total_profit": 4}
+    },
+    "telegram": {
+        "enabled": false,
+        "token": "5012333300:AAFiwgqakXFwAsDBLqgXDLTnWqQCMBsYbK4",
+        "chat_id": "-729673394",
+        "chat": {
+            "id": -729673394
+        }
+    },
+    "api_server": {
+        "enabled": true,
+        "listen_ip_address": "127.0.0.1",
+        "listen_port": 8081,
+        "verbosity": "error",
+        "enable_openapi": false,
+        "jwt_secret_key": "575189dbf1e3bcbeda0d7b69506fb48e95826f481ce17a38c5ca8ba9ffe5911e",
+        "CORS_origins": [],
+        "username": "LitmusBot",
+        "password": "KeirMarkHugh"
+    },
+    "bot_name": "Litmus",
+    "force_entry_enable": true,
+    "initial_state": "running",
+    "internals": {
+        "process_throttle_secs": 5
+    }
+}
