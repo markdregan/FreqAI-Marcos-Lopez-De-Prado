@@ -5,7 +5,7 @@ import numpy.typing as npt
 import pandas as pd
 import time
 
-from catboost import CatBoostClassifier, EShapCalcType, EFeaturesSelectionAlgorithm, Pool
+from catboost import CatBoostClassifier, EShapCalcType, EFeaturesSelectionAlgorithm, Pool, EFstrType
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
 from user_data.litmus.model_helpers import MergedModel
@@ -14,6 +14,7 @@ from pandas import DataFrame
 from sklearn.metrics import roc_auc_score, average_precision_score
 from sklearn.preprocessing import LabelBinarizer
 from typing import Any, Dict, Tuple
+from user_data.litmus import db_helpers
 
 
 logger = logging.getLogger(__name__)
@@ -134,11 +135,33 @@ class LitmusMultiClassifier(IFreqaiModel):
 
             # Feature selection & training
             all_feature_names = np.arange(len(X_train.columns))
-            model.select_features(
+            summary = model.select_features(
                 X=train_data, eval_set=eval_data, num_features_to_select=500,
                 features_for_select=all_feature_names, steps=2,
                 algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
                 shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=False)
+
+            # Feature importance: All features selected and eliminated
+            selected = pd.DataFrame(summary["selected_features_names"], columns=["feature_name"])
+            selected["selected"] = True
+            eliminated = pd.DataFrame(
+                summary["eliminated_features_names"], columns=["feature_name"])
+            eliminated["selected"] = False
+            feature_df = pd.concat([selected, eliminated], ignore_index=True)
+            feature_df["pair"] = dk.pair
+            feature_df["train_time"] = time.time()
+
+            # Feature Importance: Scores for selected features
+            selected_importances = model.get_feature_importance(
+                data=eval_data, type=EFstrType.LossFunctionChange, prettified=True)
+            selected_importances["rank"] = selected_importances["Importances"].rank(ascending=False)
+
+            # Join
+            feature_df = feature_df.merge(
+                selected_importances, how="outer", left_on="feature_name", right_on="Feature Id")
+            feature_df.drop(columns="Feature Id", inplace=True)
+            feature_df.set_index(keys=["train_time", "pair", "feature_name"], inplace=True)
+            db_helpers.save_feature_importance(df=feature_df, table_name="feature_importance")
 
             # Model performance metrics
             encoder = LabelBinarizer()
@@ -148,13 +171,13 @@ class LitmusMultiClassifier(IFreqaiModel):
 
             # Model performance metrics
             for i, c in enumerate(encoder.classes_):
-                # AUC per class
+                # Area under ROC
                 roc_auc = roc_auc_score(y_test_enc[:, i], y_pred_proba[:, i], average=None)
-                # dk.data['extra_returns_per_train'][f"roc_auc_{c}"] = roc_auc
-                logger.info(f"{c} -ROC AUC score: {roc_auc}")
-
+                dk.data['extra_returns_per_train'][f"roc_auc_{c}"] = roc_auc
+                logger.info(f"{c} - ROC AUC score: {roc_auc}")
+                # Area under precision recall curve
                 pr_auc = average_precision_score(y_test_enc[:, i], y_pred_proba[:, i])
-                # dk.data['extra_returns_per_train'][f"pr_auc_{c}"] = pr_auc
+                dk.data['extra_returns_per_train'][f"pr_auc_{c}"] = pr_auc
                 logger.info(f"{c} - PR AUC score: {pr_auc}")
 
             models.append(model)

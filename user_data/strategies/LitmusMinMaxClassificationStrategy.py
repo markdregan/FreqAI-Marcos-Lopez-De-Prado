@@ -35,19 +35,24 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "DI_values": {"color": "grey"},
             },
             "Maxima": {
-                "is_maxima": {"color": "CornflowerBlue"},
-                "missed_maxima": {"color": "Plum"},
-                "long_exit_target": {"color": "FireBrick"},
-                "short_entry_target": {"color": "DarkOliveGreen"},
+                "is_maxima": {"color": "HotPink"},
+                "long_exit_target": {"color": "MediumVioletRed"},
+                "short_entry_target": {"color": "MediumVioletRed"},
+                "missed_maxima": {"color": "SpringGreen"},
+                "missed_long_exit_target": {"color": "DarkSeaGreen"},
+                "missed_short_entry_target": {"color": "DarkSeaGreen"},
             },
             "Minima": {
-                "is_minima": {"color": "CornflowerBlue"},
-                "missed_minima": {"color": "Plum"},
-                "long_entry_target": {"color": "DarkOliveGreen"},
-                "short_exit_target": {"color": "FireBrick"},
+                "is_minima": {"color": "HotPink"},
+                "long_entry_target": {"color": "MediumVioletRed"},
+                "short_exit_target": {"color": "MediumVioletRed"},
+                "missed_minima": {"color": "SpringGreen"},
+                "missed_long_entry_target": {"color": "DarkSeaGreen"},
+                "missed_short_exit_target": {"color": "DarkSeaGreen"},
             },
             "Thrust": {
-                "&close-roc": {"color": "DarkOliveGreen"}
+                "upper": {"color": "DarkOliveGreen"},
+                "lower": {"color": "FireBrick"},
             },
             "Real": {
                 "real-minima": {"color": "blue"},
@@ -56,16 +61,22 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             "Prec": {
                 "pr_auc_is_minima": {"color": "Thistle"},
                 "pr_auc_is_maxima": {"color": "SteelBlue"},
-                "pr_auc_upper": {"color": "Wheat"},
-                "pr_auc_lower": {"color": "Plum"}
+                "pr_auc_missed_minima": {"color": "Wheat"},
+                "pr_auc_missed_maxima": {"color": "Plum"}
             },
         },
     }
 
-    process_only_new_candles = True
+    # Stop loss config
     stoploss = -0.05
+    trailing_stop = True
+    trailing_stop_positive = 0.02
+    trailing_stop_positive_offset = 0.03
+    trailing_only_offset_is_reached = True
+
+    process_only_new_candles = True
     use_exit_signal = True
-    startup_candle_count: int = 300
+    startup_candle_count = 300
     can_short = True
 
     linear_roi_offset = DecimalParameter(
@@ -193,7 +204,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
             # Triple barrier for magnitude of change
             params = {"upper_pct": 0.02, "lower_pct": 0.02}
-            df["&thrust"] = (
+            df["thrust"] = (
                 df["close"]
                 .shift(-self.freqai_info["feature_parameters"]["label_period_candles"])
                 .rolling(self.freqai_info["feature_parameters"]["label_period_candles"] + 1)
@@ -201,17 +212,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             )
 
             lookup = {1: "upper", 2: "lower", 3: "vertical"}
-            df["&thrust"] = df["&thrust"].map(lookup)
-
-            """# Regression Target
-            df["&close-roc"] = (
-                df["close"]
-                .shift(-self.freqai_info["feature_parameters"]["label_period_candles"])
-                .rolling(self.freqai_info["feature_parameters"]["label_period_candles"] + 1)
-                .mean()
-                / df["close"]
-                - 1
-            )"""
+            df["thrust"] = df["thrust"].map(lookup)
 
         return df
 
@@ -219,18 +220,21 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         self.freqai_info = self.config["freqai"]
 
-        # All indicators must be populated by populate_any_indicators() for live functionality
-        # to work correctly.
-
-        # the model will return all labels created by user in `populate_any_indicators`
-        # (& appended targets), an indication of whether or not the prediction should be accepted,
-        # the target mean/std values for each of the labels created by user in
-        # `populate_any_indicators()` for each training period.
-
         dataframe = self.freqai.start(dataframe, metadata, self)
 
-        enter_mul = 1.5
-        exit_mul = 1.2
+        enter_mul = 2.3
+        exit_mul = 1.7
+        trigger_window = 300
+
+        dataframe["is_maxima_mean"] = dataframe["is_maxima"].rolling(trigger_window).mean()
+        dataframe["is_maxima_std"] = dataframe["is_maxima"].rolling(trigger_window).std()
+        dataframe["is_minima_mean"] = dataframe["is_minima"].rolling(trigger_window).mean()
+        dataframe["is_minima_std"] = dataframe["is_minima"].rolling(trigger_window).std()
+
+        dataframe["missed_maxima_mean"] = dataframe["missed_maxima"].rolling(trigger_window).mean()
+        dataframe["missed_maxima_std"] = dataframe["missed_maxima"].rolling(trigger_window).std()
+        dataframe["missed_minima_mean"] = dataframe["missed_minima"].rolling(trigger_window).mean()
+        dataframe["missed_minima_std"] = dataframe["missed_minima"].rolling(trigger_window).std()
 
         # Short
         dataframe["short_entry_target"] = (
