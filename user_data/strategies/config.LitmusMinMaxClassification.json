@@ -27,8 +27,7 @@
             "rateLimit": 200
         },
         "pair_whitelist": [
-	        "1INCH/USDT",
-	        "AAVE/USDT"
+	        "1INCH/USDT"
         ],
         "pair_blacklist": []
     },
@@ -79,8 +78,7 @@
                 "1h"
             ],
             "include_corr_pairlist": [
-                "BTC/USDT",
-                "ETH/USDT"
+                "BTC/USDT"
             ],
             "label_period_candles": 30,
             "include_shifted_candles": 4,
@@ -107,7 +105,8 @@
             "roc_auc_is_minima": 0,
             "roc_auc_is_maxima": 0,
             "roc_auc_upper": 0,
-            "roc_auc_lower": 0
+            "roc_auc_lower": 0,
+            "time_to_train": 0
         }
     },
     "telegram": {

@@ -1,28 +1,21 @@
 
-from freqtrade.persistence import Trade
+# from freqtrade.persistence import Trade
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy, merge_informative_pair
 from functools import reduce
 from pandas import DataFrame
-from scipy.signal import argrelextrema
 from technical import qtpylib
-from user_data.litmus import indicator_helpers
+from user_data.litmus import label_helpers
 
 import logging
-import numpy as np
 import pandas as pd
 import talib.abstract as ta
 
 logger = logging.getLogger(__name__)
 
 
-class LitmusMinMaxClassificationStrategy(IStrategy):
+class LitmusMinMaxMultiLabelClassificationStrategy(IStrategy):
     """
-    Example strategy showing how the user connects their own
-    IFreqaiModel to the strategy. Namely, the user uses:
-    self.freqai.start(dataframe, metadata)
-    to make predictions on their data. populate_any_indicators() automatically
-    generates the variety of features indicated by the user in the
-    canonical freqtrade configuration file under config['freqai'].
+    Multi label classification strategy
     """
 
     minimal_roi = {"0": 0.1, "600": -1}
@@ -180,39 +173,19 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             df["%-day_of_week"] = df["date"].dt.dayofweek
             df["%-hour_of_day"] = df["date"].dt.hour
 
-            # Define Min & Max binary indicators
-            min_peaks = argrelextrema(df["close"].values, np.less, order=15)[0]
-            max_peaks = argrelextrema(df["close"].values, np.greater, order=15)[0]
+            # Find all good entries and exits for longs
+            min_duration = 30
+            min_growth = 0.02
 
-            df["&minmax-target"] = "not_minmax"
-            df["real-minima"] = 0
-            df["real-maxima"] = 0
-
-            # Minima
-            for mp in min_peaks:
-                df.at[mp, "real-minima"] = 1
-                df.at[mp, "&minmax-target"] = 'is_minima'
-                df.at[mp + 1, "&minmax-target"] = 'missed_minima'
-                df.at[mp + 2, "&minmax-target"] = 'missed_minima'
-
-            # Maxima
-            for mp in max_peaks:
-                df.at[mp, "real-maxima"] = 1
-                df.at[mp, "&minmax-target"] = "is_maxima"
-                df.at[mp + 1, "&minmax-target"] = 'missed_maxima'
-                df.at[mp + 2, "&minmax-target"] = 'missed_maxima'
-
-            # Triple barrier for magnitude of change
-            params = {"upper_pct": 0.02, "lower_pct": 0.02}
-            df["thrust"] = (
-                df["close"]
-                .shift(-self.freqai_info["feature_parameters"]["label_period_candles"])
-                .rolling(self.freqai_info["feature_parameters"]["label_period_candles"] + 1)
-                .apply(indicator_helpers.tripple_barrier, raw=False, kwargs=params)
+            long_labels = label_helpers.entry_exit_labeler(
+                df["close"], direction="long", min_growth=min_growth, max_duration=min_duration
+            )
+            short_labels = label_helpers.entry_exit_labeler(
+                df["close"], direction="short", min_growth=min_growth, max_duration=min_duration
             )
 
-            lookup = {1: "upper", 2: "lower", 3: "vertical"}
-            df["thrust"] = df["thrust"].map(lookup)
+            df = pd.concat([df, long_labels, short_labels], axis=1)
+            print(df.columns)
 
         return df
 
@@ -222,11 +195,13 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         dataframe = self.freqai.start(dataframe, metadata, self)
 
-        enter_mul = 2.6
-        exit_mul = 1.7
+        # enter_mul = 2.6
+        # exit_mul = 1.7
         trigger_window = 300
+        print(dataframe.head())
 
-        dataframe["is_maxima_mean"] = dataframe["is_maxima"].rolling(trigger_window).mean()
+        dataframe["test"] = dataframe["close"].rolling(trigger_window).mean()
+        """dataframe["is_maxima_mean"] = dataframe["is_maxima"].rolling(trigger_window).mean()
         dataframe["is_maxima_std"] = dataframe["is_maxima"].rolling(trigger_window).std()
         dataframe["is_minima_mean"] = dataframe["is_minima"].rolling(trigger_window).mean()
         dataframe["is_minima_std"] = dataframe["is_minima"].rolling(trigger_window).std()
@@ -254,71 +229,43 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
         dataframe["missed_long_entry_target"] = (
                 dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * enter_mul)
         dataframe["missed_long_exit_target"] = (
-                dataframe["missed_maxima_mean"] + dataframe["missed_maxima_std"] * exit_mul)
+                dataframe["missed_maxima_mean"] + dataframe["missed_maxima_std"] * exit_mul)"""
 
         return dataframe
 
     def populate_entry_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
         # Long Entry
-        conditions = [df["do_predict"] == 1, df["is_minima"] > df["long_entry_target"]]
+        conditions = [df["do_predict"] == 1, df["test"] > 0]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
             ] = (1, "is_minima")
 
-        # Missed Long Entry
-        conditions = [df["do_predict"] == 1, df["missed_minima"] > df["missed_long_entry_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
-            ] = (1, "missed_minima")
-
         # Short Entry
-        conditions = [df["do_predict"] == 1, df["is_maxima"] > df["short_entry_target"]]
+        conditions = [df["do_predict"] == 1, df["test"] > 0]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
             ] = (1, "is_maxima")
-
-        # Missed Short Entry
-        conditions = [df["do_predict"] == 1, df["missed_maxima"] > df["missed_short_entry_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
-            ] = (1, "missed_maxima")
 
         return df
 
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
         # Long Exit
-        conditions = [1 == 1, df["is_maxima"] > df["long_exit_target"]]
+        conditions = [1 == 1, df["test"] > 0]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
             ] = (1, "is_maxima")
 
-        # Missed Long Exit
-        conditions = [1 == 1, df["missed_maxima"] > df["missed_long_exit_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
-            ] = (1, "missed_maxima")
-
         # Short Exit
-        conditions = [1 == 1, df["is_minima"] > df["short_exit_target"]]
+        conditions = [1 == 1, df["test"] > 0]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
             ] = (1, "is_minima")
-
-        # Missed Short Exit
-        conditions = [1 == 1, df["missed_minima"] > df["missed_short_exit_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
-            ] = (1, "missed_minima")
 
         return df
 
@@ -407,34 +354,14 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
         **kwargs,
     ) -> bool:
 
-        # Ensure excessive slippage is avoided
         df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = df.iloc[-1].squeeze()
 
         if side == "long":
             if rate > (last_candle["close"] * (1 + 0.0025)):
-                logger.info("Long trade blocked due to excessive slippage")
                 return False
         else:
             if rate < (last_candle["close"] * (1 - 0.0025)):
-                logger.info("Short trade blocked due to excessive slippage")
                 return False
-
-        # Balance the number of long vs short positions
-        open_trades = Trade.get_trades(trade_filter=Trade.is_open.is_(True))
-        num_shorts, num_longs = 0, 0
-        for trade in open_trades:
-            if trade.enter_tag == 'short':
-                num_shorts += 1
-            elif trade.enter_tag == 'long':
-                num_longs += 1
-
-        max_long_short_trades = int(self.config["max_open_trades"] / 2)
-        if side == "long" and num_longs >= max_long_short_trades:
-            logger.info("Long trade blocked due to long/short imbalance")
-            return False
-        elif side == "short" and num_shorts >= max_long_short_trades:
-            logger.info("Short trade blocked due to long/short imbalance")
-            return False
 
         return True
