@@ -174,18 +174,17 @@ class LitmusMinMaxMultiLabelClassificationStrategy(IStrategy):
             df["%-hour_of_day"] = df["date"].dt.hour
 
             # Find all good entries and exits for longs
-            min_duration = 30
+            min_duration = 60
             min_growth = 0.02
 
             long_labels = label_helpers.entry_exit_labeler(
                 df["close"], direction="long", min_growth=min_growth, max_duration=min_duration
             )
-            short_labels = label_helpers.entry_exit_labeler(
+            """short_labels = label_helpers.entry_exit_labeler(
                 df["close"], direction="short", min_growth=min_growth, max_duration=min_duration
-            )
+            )"""
 
-            df = pd.concat([df, long_labels, short_labels], axis=1)
-            print(df.columns)
+            df = pd.concat([df, long_labels], axis=1)
 
         return df
 
@@ -198,7 +197,7 @@ class LitmusMinMaxMultiLabelClassificationStrategy(IStrategy):
         # enter_mul = 2.6
         # exit_mul = 1.7
         trigger_window = 300
-        print(dataframe.head())
+        print(dataframe.columns)
 
         dataframe["test"] = dataframe["close"].rolling(trigger_window).mean()
         """dataframe["is_maxima_mean"] = dataframe["is_maxima"].rolling(trigger_window).mean()

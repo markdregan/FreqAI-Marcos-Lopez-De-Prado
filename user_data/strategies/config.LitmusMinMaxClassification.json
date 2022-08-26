@@ -27,7 +27,13 @@
             "rateLimit": 200
         },
         "pair_whitelist": [
-	        "1INCH/USDT"
+	        "1INCH/USDT",
+            "AAVE/USDT",
+            "ADA/USDT",
+            "SOL/USDT",
+            "ALGO/USDT",
+            "DOGE/USDT",
+            "DYDX/USDT"
         ],
         "pair_blacklist": []
     },

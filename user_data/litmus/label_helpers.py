@@ -1,23 +1,21 @@
 from scipy.signal import find_peaks
 from scipy.spatial.distance import cdist
 
+import logging
 import numpy as np
 import pandas as pd
-import logging
+import time
 
 logger = logging.getLogger(__name__)
-
-
-def cdist_growth(a, b):
-    """Compute simple growth rate from a to b"""
-    diff = b - a
-    return np.divide(diff, a)
 
 
 def entry_exit_labeler(close_df, direction, min_growth, max_duration):
     """Label timeseries for good entries and exits at peaks"""
 
-    logger.info(f"Labeling for {direction} trades: Growth {min_growth}, Duration {max_duration}")
+    logger.info(f"Labeling for {direction} trades for {len(close_df)} samples")
+    logger.info(f"Labeling settings: min_growth {min_growth}, max_duration {max_duration}")
+    start_time = time.time()
+
     close = close_df.values
     if direction == "short":
         close = close * -1
@@ -39,7 +37,9 @@ def entry_exit_labeler(close_df, direction, min_growth, max_duration):
         minmax_mask = np.outer(max_mask, min_mask)
 
     # Compute distance matrix between all close points
-    dist_matrix = cdist(close.reshape(-1, 1), close.reshape(-1, 1), metric=cdist_growth)
+    euclidean_dist_matrix = cdist(close.reshape(-1, 1), close.reshape(-1, 1), metric="euclidean")
+    # Compute growth rate by dividing euclidean by close
+    dist_matrix = euclidean_dist_matrix / close.reshape(-1, 1)
 
     # Scope dist_matrix to distances > min_threshold
     growth_mask = (dist_matrix - min_growth) > 0
@@ -74,9 +74,18 @@ def entry_exit_labeler(close_df, direction, min_growth, max_duration):
         entry_idx = max_idx
         exit_idx = min_idx
 
-    df.loc[[i for i in entry_idx if i not in good_entry_idx], col_names[2]] = "Yes"
-    df.loc[good_entry_idx, col_names[0]] = "Yes"
-    df.loc[[i for i in exit_idx if i not in good_exit_idx], col_names[3]] = "Yes"
-    df.loc[good_exit_idx, col_names[1]] = "Yes"
+    """df.loc[[i for i in entry_idx if i not in good_entry_idx], col_names[2]] = col_names[2]
+    df.loc[good_entry_idx, col_names[0]] = col_names[0]
+    df.loc[[i for i in exit_idx if i not in good_exit_idx], col_names[3]] = col_names[3]
+    df.loc[good_exit_idx, col_names[1]] = col_names[1]"""
+
+    df.loc[entry_idx, col_names[2]] = col_names[2]
+    df.loc[good_entry_idx, col_names[0]] = col_names[0]
+    df.loc[exit_idx, col_names[3]] = col_names[3]
+    df.loc[good_exit_idx, col_names[1]] = col_names[1]
+
+    end_time = time.time() - start_time
+    logger.info(f"Time taken to label data: {end_time} seconds")
+    print(end_time)
 
     return df

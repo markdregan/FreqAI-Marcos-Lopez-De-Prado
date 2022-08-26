@@ -2,7 +2,6 @@
 import logging
 import numpy as np
 import numpy.typing as npt
-import pandas as pd
 import time
 
 from catboost import CatBoostClassifier, Pool
@@ -92,15 +91,18 @@ class LitmusMultiLabelClassifier(IFreqaiModel):
 
         self.data_cleaning_predict(dk, filtered_dataframe)
 
-        predictions = self.model.predict(dk.data_dictionary["prediction_features"])
-        pred_df = DataFrame(predictions, columns=dk.label_list)
+        """predictions = self.model.predict(dk.data_dictionary["prediction_features"])
+        pred_df = DataFrame(predictions, columns=dk.label_list)"""
 
         predictions_prob = self.model.predict_proba(dk.data_dictionary["prediction_features"])
-        pred_df_prob = DataFrame(predictions_prob, columns=self.model.classes_)
+        print(self.model.classes_)
+        print(dk.label_list)
+        print(predictions_prob)
+        pred_df_prob = DataFrame(predictions_prob, columns=dk.label_list)
 
-        pred_df = pd.concat([pred_df, pred_df_prob], axis=1)
+        """pred_df = pd.concat([pred_df, pred_df_prob], axis=1)"""
 
-        return (pred_df, dk.do_predict)
+        return (pred_df_prob, dk.do_predict)
 
     def fit(self, data_dictionary: Dict, dk: FreqaiDataKitchen) -> Any:
         """
@@ -120,11 +122,15 @@ class LitmusMultiLabelClassifier(IFreqaiModel):
         y_test = data_dictionary["train_labels"]
 
         # Change "NoLabel" to np.nan
-        replace_rules = {"Yes": 1, "No": 0}
+        replace_rules = {"&good_long_entry": 1, "&good_long_exit": 1,
+                         "&good_short_entry": 1, "&good_short_exit": 1,
+                         "&fake_long_entry": 1, "&fake_long_exit": 1,
+                         "&fake_short_entry": 1, "&fake_short_exit": 1,
+                         "No": 0}
         y_train.replace(replace_rules, inplace=True)
         y_test.replace(replace_rules, inplace=True)
         print(y_train)
-        print(y_test)
+        print(y_train.describe())
 
         """# Convert to multi-label format
         mlb = MultiLabelBinarizer()
