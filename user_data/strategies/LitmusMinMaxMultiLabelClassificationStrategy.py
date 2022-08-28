@@ -28,7 +28,7 @@ class LitmusMinMaxMultiLabelClassificationStrategy(IStrategy):
                 "DI_values": {"color": "grey"},
             },
             "Maxima": {
-                "is_maxima": {"color": "HotPink"},
+                "good_exit": {"color": "HotPink"},
                 "long_exit_target": {"color": "MediumVioletRed"},
                 "short_entry_target": {"color": "MediumVioletRed"},
                 "missed_maxima": {"color": "SpringGreen"},
@@ -36,7 +36,7 @@ class LitmusMinMaxMultiLabelClassificationStrategy(IStrategy):
                 "missed_short_entry_target": {"color": "DarkSeaGreen"},
             },
             "Minima": {
-                "is_minima": {"color": "HotPink"},
+                "good_entry": {"color": "HotPink"},
                 "long_entry_target": {"color": "MediumVioletRed"},
                 "short_exit_target": {"color": "MediumVioletRed"},
                 "missed_minima": {"color": "SpringGreen"},
@@ -178,7 +178,7 @@ class LitmusMinMaxMultiLabelClassificationStrategy(IStrategy):
             min_growth = 0.02
 
             long_labels = label_helpers.entry_exit_labeler(
-                df["close"], direction="long", min_growth=min_growth, max_duration=min_duration
+                df["close"], min_growth=min_growth, max_duration=min_duration
             )
             """short_labels = label_helpers.entry_exit_labeler(
                 df["close"], direction="short", min_growth=min_growth, max_duration=min_duration
