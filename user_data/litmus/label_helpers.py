@@ -20,6 +20,17 @@ def minmax_growth(ts):
     return res
 
 
+def minmax_growth_np(ts):
+    """Just for testing without numba... very slow for large ts"""
+    ts = ts.astype(np.float32)
+    res = np.empty((ts.shape[0], ts.shape[0]), dtype=ts.dtype)
+    for i in range(ts.shape[0]):
+        for j in range(ts.shape[0]):
+            r = (ts[j] - ts[i]) / ts[i]
+            res[i, j] = r
+    return res
+
+
 def entry_exit_labeler(close_df, min_growth, max_duration):
     """Label timeseries for good entries and exits at peaks"""
 
@@ -40,7 +51,7 @@ def entry_exit_labeler(close_df, min_growth, max_duration):
     max_mask[exit_idx] = True
 
     # Compute distance matrix between all close points
-    dist_matrix = minmax_growth(close)
+    dist_matrix = minmax_growth_np(close)
 
     # Scope dist_matrix to distances > min_threshold
     growth_mask = (dist_matrix - min_growth) > 0
