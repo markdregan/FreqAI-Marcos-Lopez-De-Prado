@@ -27,7 +27,13 @@
             "rateLimit": 200
         },
         "pair_whitelist": [
-	        "1INCH/USDT"
+	        "1INCH/USDT",
+            "AAVE/USDT",
+            "ADA/USDT",
+            "SOL/USDT",
+            "ALGO/USDT",
+            "DOGE/USDT",
+            "DYDX/USDT"
         ],
         "pair_blacklist": []
     },
@@ -63,13 +69,13 @@
     ],
     "freqai": {
         "enabled": true,
-        "startup_candles": 1000,
+        "startup_candles": 10000,
         "purge_old_models": true,
         "train_period_days": 20,
         "backtest_period_days": 2,
-        "live_retrain_hours": 0.25,
-        "fit_live_predictions_candles": 0,
-        "identifier": "LitmusMinMaxClassification",
+        "live_retrain_hours": 0.1,
+        "fit_live_predictions_candles": 200,
+        "identifier": "LitmusMinMax",
         "live_trained_timestamp": 0,
         "feature_parameters": {
             "include_timeframes": [
@@ -80,7 +86,7 @@
             "include_corr_pairlist": [
                 "BTC/USDT"
             ],
-            "label_period_candles": 30,
+            "label_period_candles": 50,
             "include_shifted_candles": 4,
             "DI_threshold": 1.9,
             "weight_factor": 0.9,
@@ -88,24 +94,17 @@
             "use_SVM_to_remove_outliers": true,
             "stratify_training_data": 0,
             "indicator_max_period_candles": 300,
-            "indicator_periods_candles": [10, 20, 50, 100]
+            "indicator_periods_candles": [10, 20, 50, 100],
+            "noise_standard_deviation": 0.05
         },
         "data_split_parameters": {
-            "test_size": 0.7,
-            "shuffle": false
+            "test_size": 0.5,
+            "shuffle": true
         },
         "model_training_parameters": {
 
         },
         "extra_returns_per_train": {
-            "pr_auc_is_minima": 0,
-            "pr_auc_is_maxima": 0,
-            "pr_auc_upper": 0,
-            "pr_auc_lower": 0,
-            "roc_auc_is_minima": 0,
-            "roc_auc_is_maxima": 0,
-            "roc_auc_upper": 0,
-            "roc_auc_lower": 0,
             "time_to_train": 0
         }
     },

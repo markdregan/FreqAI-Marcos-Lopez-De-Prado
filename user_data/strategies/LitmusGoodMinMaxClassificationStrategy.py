@@ -1,28 +1,22 @@
+import logging
+import numpy as np
+import pandas as pd
+import talib.abstract as ta
+import time
 
 # from freqtrade.persistence import Trade
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy, merge_informative_pair
 from functools import reduce
 from pandas import DataFrame
-from scipy.signal import argrelextrema
+from scipy.signal import find_peaks
 from technical import qtpylib
 
-import logging
-import numpy as np
-import pandas as pd
-import talib.abstract as ta
+# from user_data.litmus import label_helpers
 
 logger = logging.getLogger(__name__)
 
 
-class LitmusDeltaMinMaxRegressionStrategy(IStrategy):
-    """
-    Example strategy showing how the user connects their own
-    IFreqaiModel to the strategy. Namely, the user uses:
-    self.freqai.start(dataframe, metadata)
-    to make predictions on their data. populate_any_indicators() automatically
-    generates the variety of features indicated by the user in the
-    canonical freqtrade configuration file under config['freqai'].
-    """
+class LitmusGoodMinMaxClassificationStrategy(IStrategy):
 
     minimal_roi = {"0": 0.1, "600": -1}
 
@@ -34,29 +28,38 @@ class LitmusDeltaMinMaxRegressionStrategy(IStrategy):
                 "DI_values": {"color": "grey"},
             },
             "Long": {
-                "&delta_minmax": {"color": "CornflowerBlue"},
-                "long_exit_target": {"color": "FireBrick"},
-                "long_entry_target": {"color": "DarkOliveGreen"},
+                "good_entry_long": {"color": "SpringGreen"},
+                "good_exit_long": {"color": "MediumVioletRed"},
             },
             "Short": {
-                "&delta_minmax": {"color": "CornflowerBlue"},
-                "short_entry_target": {"color": "DarkOliveGreen"},
-                "short_exit_target": {"color": "FireBrick"},
+                "good_entry_short": {"color": "SpringGreen"},
+                "good_exit_short": {"color": "MediumVioletRed"},
             },
-            "Real": {
-                "real_minima": {"color": "blue"},
-                "real_maxima": {"color": "yellow"}
+            "True": {
+                "true_good_entry_long": {"color": "#4dff4d"},
+                "true_good_exit_long": {"color": "#ff471a"},
+                "true_bad_entry_long": {"color": "#e6ffe6"},
+                "true_bad_exit_long": {"color": "#ffebe6"},
             },
-            "Extra": {
-                "delta_minmax_plot": {"color": "Thistle"}
+            "Prec": {
+                "pr_auc_is_minima": {"color": "Thistle"},
+                "pr_auc_is_maxima": {"color": "SteelBlue"},
+                "pr_auc_missed_minima": {"color": "Wheat"},
+                "pr_auc_missed_maxima": {"color": "Plum"}
             },
         },
     }
 
-    process_only_new_candles = True
+    # Stop loss config
     stoploss = -0.05
+    trailing_stop = True
+    trailing_stop_positive = 0.02
+    trailing_stop_positive_offset = 0.03
+    trailing_only_offset_is_reached = True
+
+    process_only_new_candles = True
     use_exit_signal = True
-    startup_candle_count: int = 300
+    startup_candle_count = 300
     can_short = True
 
     linear_roi_offset = DecimalParameter(
@@ -160,23 +163,18 @@ class LitmusDeltaMinMaxRegressionStrategy(IStrategy):
             df["%-day_of_week"] = df["date"].dt.dayofweek
             df["%-hour_of_day"] = df["date"].dt.hour
 
-            # Define Min & Max binary indicators
-            min_peaks = argrelextrema(df["close"].values, np.less, order=15)[0]
-            max_peaks = argrelextrema(df["close"].values, np.greater, order=15)[0]
+            # Find all good entries and exits for longs
+            min_duration = 60
+            min_growth = 0.02
 
-            df["real_minima"] = 0
-            df["real_maxima"] = 0
-            df.loc[min_peaks, "real_minima"] = 1
-            df.loc[max_peaks, "real_maxima"] = 1
+            long_labels = entry_exit_labeler(
+                df["close"], min_growth=min_growth, max_duration=min_duration, suffix="_long"
+            )
+            """short_labels = label_helpers.entry_exit_labeler(
+                df["close"], min_growth=min_growth, max_duration=min_duration, suffix="_short"
+            )"""
 
-            df["next_peak_close"] = np.nan
-            df.loc[min_peaks, "next_peak_close"] = df.loc[min_peaks, "close"]
-            df.loc[max_peaks, "next_peak_close"] = df.loc[max_peaks, "close"]
-            df["next_peak_close"].fillna(method="backfill", axis=0, inplace=True)
-
-            # Delta to Next Min/Max Regression Target
-            df["&delta_minmax"] = df["next_peak_close"].shift(-1) / df["close"] - 1
-            df["delta_minmax_plot"] = df["&delta_minmax"]
+            df = pd.concat([df, long_labels], axis=1)
 
         return df
 
@@ -184,41 +182,40 @@ class LitmusDeltaMinMaxRegressionStrategy(IStrategy):
 
         self.freqai_info = self.config["freqai"]
 
-        # All indicators must be populated by populate_any_indicators() for live functionality
-        # to work correctly.
-
-        # the model will return all labels created by user in `populate_any_indicators`
-        # (& appended targets), an indication of whether or not the prediction should be accepted,
-        # the target mean/std values for each of the labels created by user in
-        # `populate_any_indicators()` for each training period.
-
         dataframe = self.freqai.start(dataframe, metadata, self)
 
-        enter_mul = 1.5
-        exit_mul = 0.2
+        # enter_mul = 2.6
+        # exit_mul = 1.7
         trigger_window = 300
-
         print(dataframe.columns)
 
-        dataframe["delta_minmax_mean"] = dataframe["&delta_minmax"].rolling(trigger_window).mean()
-        dataframe["delta_minmax_std"] = dataframe["&delta_minmax"].rolling(trigger_window).std()
+        dataframe["test"] = dataframe["close"].rolling(trigger_window).mean()
+        """dataframe["is_maxima_mean"] = dataframe["is_maxima"].rolling(trigger_window).mean()
+        dataframe["is_maxima_std"] = dataframe["is_maxima"].rolling(trigger_window).std()
+        dataframe["is_minima_mean"] = dataframe["is_minima"].rolling(trigger_window).mean()
+        dataframe["is_minima_std"] = dataframe["is_minima"].rolling(trigger_window).std()
+
+        dataframe["missed_maxima_mean"] = dataframe["missed_maxima"].rolling(trigger_window).mean()
+        dataframe["missed_maxima_std"] = dataframe["missed_maxima"].rolling(trigger_window).std()
+        dataframe["missed_minima_mean"] = dataframe["missed_minima"].rolling(trigger_window).mean()
+        dataframe["missed_minima_std"] = dataframe["missed_minima"].rolling(trigger_window).std()
 
         # Short
         dataframe["short_entry_target"] = (
-                dataframe["delta_minmax_mean"] - dataframe["delta_minmax_std"] * enter_mul)
+                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * enter_mul)
         dataframe["short_exit_target"] = (
-                dataframe["delta_minmax_mean"] - dataframe["delta_minmax_std"] * exit_mul)
-        """dataframe["missed_short_entry_target"] = (
+                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * exit_mul)
+        dataframe["missed_short_entry_target"] = (
                 dataframe["missed_maxima_mean"] + dataframe["missed_maxima_std"] * enter_mul)
         dataframe["missed_short_exit_target"] = (
-                dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * exit_mul)"""
+                dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * exit_mul)
 
         # Long
         dataframe["long_entry_target"] = (
-                dataframe["delta_minmax_mean"] + dataframe["delta_minmax_std"] * enter_mul)
+                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * enter_mul)
         dataframe["long_exit_target"] = (
-                dataframe["delta_minmax_mean"] + dataframe["delta_minmax_std"] * exit_mul)
-        """dataframe["missed_long_entry_target"] = (
+                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * exit_mul)
+        dataframe["missed_long_entry_target"] = (
                 dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * enter_mul)
         dataframe["missed_long_exit_target"] = (
                 dataframe["missed_maxima_mean"] + dataframe["missed_maxima_std"] * exit_mul)"""
@@ -228,64 +225,36 @@ class LitmusDeltaMinMaxRegressionStrategy(IStrategy):
     def populate_entry_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
         # Long Entry
-        conditions = [df["do_predict"] == 1, df["&delta_minmax"] > df["long_entry_target"]]
+        conditions = [df["do_predict"] == 1, df["test"] > 0]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
             ] = (1, "is_minima")
 
-        """# Missed Long Entry
-        conditions = [df["do_predict"] == 1, df["missed_minima"] > df["missed_long_entry_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
-            ] = (1, "missed_minima")"""
-
         # Short Entry
-        conditions = [df["do_predict"] == 1, df["&delta_minmax"] < df["short_entry_target"]]
+        conditions = [df["do_predict"] == 1, df["test"] > 0]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
             ] = (1, "is_maxima")
-
-        """# Missed Short Entry
-        conditions = [df["do_predict"] == 1, df["missed_maxima"] > df["missed_short_entry_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
-            ] = (1, "missed_maxima")"""
 
         return df
 
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
         # Long Exit
-        conditions = [1 == 1, df["&delta_minmax"] < df["long_exit_target"]]
+        conditions = [1 == 1, df["test"] > 0]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
             ] = (1, "is_maxima")
 
-        """# Missed Long Exit
-        conditions = [1 == 1, df["missed_maxima"] > df["missed_long_exit_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
-            ] = (1, "missed_maxima")"""
-
         # Short Exit
-        conditions = [1 == 1, df["&delta_minmax"] > df["short_exit_target"]]
+        conditions = [1 == 1, df["test"] > 0]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
             ] = (1, "is_minima")
-
-        """# Missed Short Exit
-        conditions = [1 == 1, df["missed_minima"] > df["missed_short_exit_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
-            ] = (1, "missed_minima")"""
 
         return df
 
@@ -385,3 +354,83 @@ class LitmusDeltaMinMaxRegressionStrategy(IStrategy):
                 return False
 
         return True
+
+
+def minmax_growth_np(ts):
+    """Just for testing without numba... very slow for large ts"""
+    ts = ts.astype(np.float32)
+    res = np.empty((ts.shape[0], ts.shape[0]), dtype=ts.dtype)
+    for i in range(ts.shape[0]):
+        for j in range(ts.shape[0]):
+            r = (ts[j] - ts[i]) / ts[i]
+            res[i, j] = r
+    return res
+
+
+def entry_exit_labeler(close_df, min_growth, max_duration, suffix=None):
+    """Label timeseries for good entries and exits at peaks"""
+
+    logger.info(f"Labeling for {len(close_df)} samples")
+    logger.info(f"Labeling settings: min_growth {min_growth}, max_duration {max_duration}")
+    start_time = time.time()
+
+    close = close_df.values
+
+    # Find all peaks and valleys
+    exit_idx = find_peaks(close)[0]
+    entry_idx = find_peaks(-close)[0]
+
+    # Mask valleys & peaks
+    min_mask = np.zeros(close.shape, dtype=bool)
+    min_mask[entry_idx] = True
+    max_mask = np.zeros(close.shape, dtype=bool)
+    max_mask[exit_idx] = True
+
+    # Compute distance matrix between all close points
+    dist_matrix = minmax_growth_np(close)
+
+    # Scope dist_matrix to distances > min_threshold
+    growth_mask = (dist_matrix - min_growth) > 0
+    dist_matrix = dist_matrix * growth_mask
+
+    # Limit to max_duration & remove lower triangle
+    dist_matrix = np.tril(dist_matrix, k=max_duration)
+    dist_matrix = np.triu(dist_matrix)
+
+    # Scope to only entries & get idx
+    dist_matrix = dist_matrix * min_mask.reshape(-1, 1)
+    good_entry_idx, _ = np.where(dist_matrix > 0)
+
+    # Scope to entries & exits & find idx
+    dist_matrix = dist_matrix * max_mask
+    _, good_exit_idx = np.where(dist_matrix > 0)
+
+    # Populate DataFrame and return
+    col_names = ["&target", "true_good_entry", "true_good_exit", "true_bad_entry", "true_bad_exit"]
+    col_names = [i + suffix for i in col_names]
+    label_names = ["good_entry", "good_exit", "bad_entry", "bad_exit", "transition"]
+    label_names = [i + suffix for i in label_names]
+
+    df = pd.DataFrame(columns=col_names, index=close_df.index)
+    df[col_names[1:]] = 0
+
+    # Bad entries
+    df.loc[[i for i in entry_idx if i not in good_entry_idx], col_names[0]] = label_names[2]
+    df.loc[[i for i in entry_idx if i not in good_entry_idx], col_names[3]] = 1
+    # Good entries
+    df.loc[good_entry_idx, col_names[0]] = label_names[0]
+    df.loc[good_entry_idx, col_names[1]] = 1
+    # Bad exit
+    df.loc[[i for i in exit_idx if i not in good_exit_idx], col_names[0]] = label_names[3]
+    df.loc[[i for i in exit_idx if i not in good_exit_idx], col_names[4]] = 1
+    # Good exit
+    df.loc[good_exit_idx, col_names[0]] = label_names[1]
+    df.loc[good_exit_idx, col_names[2]] = 1
+    # Fill the rest with filler_value
+    df[col_names[0]].fillna(value=label_names[4], inplace=True)
+
+    end_time = time.time() - start_time
+    logger.info(f"Time taken to label data: {end_time} seconds")
+    print(df)
+
+    return df

@@ -5,7 +5,7 @@ from functools import reduce
 from pandas import DataFrame
 from scipy.signal import argrelextrema
 from technical import qtpylib
-from user_data.litmus import indicator_helpers
+# from user_data.litmus import indicator_helpers
 
 import logging
 import numpy as np
@@ -50,9 +50,8 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "missed_long_entry_target": {"color": "DarkSeaGreen"},
                 "missed_short_exit_target": {"color": "DarkSeaGreen"},
             },
-            "Thrust": {
-                "upper": {"color": "DarkOliveGreen"},
-                "lower": {"color": "FireBrick"},
+            "Next": {
+                "next_minmax_growth": {"color": "Grey"}
             },
             "Real": {
                 "real-minima": {"color": "blue"},
@@ -191,18 +190,27 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             # Minima
             for mp in min_peaks:
                 df.at[mp, "real-minima"] = 1
-                df.at[mp, "&minmax-target"] = 'is_minima'
-                df.at[mp + 1, "&minmax-target"] = 'missed_minima'
-                df.at[mp + 2, "&minmax-target"] = 'missed_minima'
+                df.at[mp, "&minmax-target"] = "is_minima"
+                df.at[mp + 1, "&minmax-target"] = "missed_minima"
+                df.at[mp + 2, "&minmax-target"] = "missed_minima"
 
             # Maxima
             for mp in max_peaks:
                 df.at[mp, "real-maxima"] = 1
                 df.at[mp, "&minmax-target"] = "is_maxima"
-                df.at[mp + 1, "&minmax-target"] = 'missed_maxima'
-                df.at[mp + 2, "&minmax-target"] = 'missed_maxima'
+                df.at[mp + 1, "&minmax-target"] = "missed_maxima"
+                df.at[mp + 2, "&minmax-target"] = "missed_maxima"
 
-            # Triple barrier for magnitude of change
+            # Next MinMax Regression
+            df["next_peak_close"] = np.nan
+            df.loc[min_peaks, "next_peak_close"] = df.loc[min_peaks, "close"]
+            df.loc[max_peaks, "next_peak_close"] = df.loc[max_peaks, "close"]
+            df["next_peak_close"].fillna(method="backfill", axis=0, inplace=True)
+
+            # Delta to Next Min/Max Regression Target
+            df["next_minmax_growth"] = df["next_peak_close"].shift(-1) / df["close"] - 1
+
+            """# Triple barrier for magnitude of change
             params = {"upper_pct": 0.02, "lower_pct": 0.02}
             df["thrust"] = (
                 df["close"]
@@ -212,7 +220,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             )
 
             lookup = {1: "upper", 2: "lower", 3: "vertical"}
-            df["thrust"] = df["thrust"].map(lookup)
+            df["thrust"] = df["thrust"].map(lookup)"""
 
         return df
 

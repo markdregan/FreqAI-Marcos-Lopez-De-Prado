@@ -1,8 +1,7 @@
 import logging
-import numpy as np
 
 from typing import Any, Dict
-from catboost import CatBoostRegressor, Pool, EFeaturesSelectionAlgorithm
+from catboost import CatBoostRegressor, Pool
 from freqtrade.freqai.prediction_models.BaseRegressionModel import BaseRegressionModel
 
 
@@ -38,11 +37,13 @@ class LitmusRegressionModel(BaseRegressionModel):
 
         # Select best features
         model = CatBoostRegressor(
-            iterations=1000, loss_function="RMSE", allow_writing_files=False,
-            early_stopping_rounds=30, task_type="CPU", verbose=False
+            iterations=600, loss_function="MultiRMSE", allow_writing_files=False,
+            early_stopping_rounds=10, task_type="CPU", verbose=True
         )
 
-        features = data_dictionary["test_features"].columns
+        model.fit(X=train_data, eval_set=test_data)
+
+        """features = data_dictionary["test_features"].columns
         model.select_features(
             X=train_data,
             eval_set=test_data,
@@ -53,6 +54,6 @@ class LitmusRegressionModel(BaseRegressionModel):
             train_final_model=True,
             verbose=False,
             plot=False
-        )
+        )"""
 
         return model

@@ -8,18 +8,15 @@ import time
 from catboost import CatBoostClassifier, Pool
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
-from user_data.litmus.model_helpers import MergedModel
 from imblearn.over_sampling import SMOTE
 from pandas import DataFrame
-from sklearn.metrics import roc_auc_score, average_precision_score
-from sklearn.preprocessing import LabelBinarizer
 from typing import Any, Dict, Tuple
 
 
 logger = logging.getLogger(__name__)
 
 
-class LitmusMultiClassifier(IFreqaiModel):
+class LitmusSingleTargetClassifier(IFreqaiModel):
     """
     Base class for regression type models (e.g. Catboost, LightGBM, XGboost etc.).
     User *must* inherit from this class and set fit() and predict(). See example scripts
@@ -112,79 +109,43 @@ class LitmusMultiClassifier(IFreqaiModel):
         """
 
         start_time = time.time()
-        models = []
-        for t in data_dictionary["train_labels"].columns:
-            # Swap train and test data
-            X_train = data_dictionary["test_features"]
-            y_train = data_dictionary["test_labels"][t]
-            X_test = data_dictionary["train_features"]
-            y_test = data_dictionary["train_labels"][t]
 
-            # Address class imbalance
-            smote = SMOTE()
-            X_train, y_train = smote.fit_resample(X_train, y_train)
+        # Swap train and test data
+        X_train = data_dictionary["test_features"]
+        y_train = data_dictionary["test_labels"]
+        X_test = data_dictionary["train_features"]
+        y_test = data_dictionary["train_labels"]
 
-            # Create Pool objs for catboost
-            train_data = Pool(data=X_train, label=y_train)
-            eval_data = Pool(data=X_test, label=y_test)
+        # Address class imbalance
+        smote = SMOTE()
+        X_train, y_train = smote.fit_resample(X_train, y_train)
 
-            model = CatBoostClassifier(
-                iterations=1000, loss_function="MultiClass", allow_writing_files=False,
-                early_stopping_rounds=30, task_type="CPU", verbose=False)
+        # Create Pool objs for catboost
+        train_data = Pool(data=X_train, label=y_train)
+        eval_data = Pool(data=X_test, label=y_test)
 
-            """all_feature_names = np.arange(len(X_train.columns))
-            summary = model.select_features(
-                X=train_data, eval_set=eval_data, num_features_to_select=500,
-                features_for_select=all_feature_names, steps=2,
-                algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
-                shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=False)
+        model = CatBoostClassifier(
+            iterations=1000, loss_function="MultiClass", allow_writing_files=False,
+            early_stopping_rounds=30, task_type="CPU", verbose=True)
 
-            # Feature importance: All features selected and eliminated
-            selected = pd.DataFrame(summary["selected_features_names"], columns=["feature_name"])
-            selected["selected"] = True
-            eliminated = pd.DataFrame(
-                summary["eliminated_features_names"], columns=["feature_name"])
-            eliminated["selected"] = False
-            feature_df = pd.concat([selected, eliminated], ignore_index=True)
-            feature_df["pair"] = dk.pair
-            feature_df["train_time"] = time.time()
+        model.fit(X=train_data, eval_set=eval_data)
 
-            # Feature Importance: Scores for selected features
-            selected_importances = model.get_feature_importance(
-                data=eval_data, type=EFstrType.LossFunctionChange, prettified=True)
-            selected_importances["rank"] = selected_importances["Importances"].rank(ascending=False)
+        """# Model performance metrics
+        encoder = LabelBinarizer()
+        encoder.fit(y_train)
+        y_test_enc = encoder.transform(y_test)
+        y_pred_proba = model.predict_proba(X_test)
 
-            # Join
-            feature_df = feature_df.merge(
-                selected_importances, how="outer", left_on="feature_name", right_on="Feature Id")
-            feature_df.drop(columns="Feature Id", inplace=True)
-            feature_df.set_index(keys=["train_time", "pair", "feature_name"], inplace=True)
-            db_helpers.save_feature_importance(df=feature_df, table_name="feature_importance")
-
-            else:"""
-
-            model.fit(X=train_data, eval_set=eval_data)
-
-            # Model performance metrics
-            encoder = LabelBinarizer()
-            encoder.fit(y_train)
-            y_test_enc = encoder.transform(y_test)
-            y_pred_proba = model.predict_proba(X_test)
-
-            # Model performance metrics
-            for i, c in enumerate(encoder.classes_):
-                # Area under ROC
-                roc_auc = roc_auc_score(y_test_enc[:, i], y_pred_proba[:, i], average=None)
-                dk.data['extra_returns_per_train'][f"roc_auc_{c}"] = roc_auc
-                logger.info(f"{c} - ROC AUC score: {roc_auc}")
-                # Area under precision recall curve
-                pr_auc = average_precision_score(y_test_enc[:, i], y_pred_proba[:, i])
-                dk.data['extra_returns_per_train'][f"pr_auc_{c}"] = pr_auc
-                logger.info(f"{c} - PR AUC score: {pr_auc}")
-
-            models.append(model)
-
-        model = MergedModel(models)
+        # Model performance metrics
+        for i, c in enumerate(encoder.classes_):
+            # Area under ROC
+            roc_auc = roc_auc_score(y_test_enc[:, i], y_pred_proba[:, i], average=None)
+            dk.data['extra_returns_per_train'][f"roc_auc_{c}"] = roc_auc
+            logger.info(f"{c} - ROC AUC score: {roc_auc}")
+            # Area under precision recall curve
+            pr_auc = average_precision_score(y_test_enc[:, i], y_pred_proba[:, i])
+            dk.data['extra_returns_per_train'][f"pr_auc_{c}"] = pr_auc
+            logger.info(f"{c} - PR AUC score: {pr_auc}")"""
 
         end_time = time.time() - start_time
         dk.data['extra_returns_per_train']["time_to_train"] = end_time

@@ -1,20 +1,27 @@
+
 # from freqtrade.persistence import Trade
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy, merge_informative_pair
 from functools import reduce
 from pandas import DataFrame
+from scipy.signal import argrelextrema
 from technical import qtpylib
-from user_data.litmus import label_helpers
 
 import logging
+import numpy as np
 import pandas as pd
 import talib.abstract as ta
 
 logger = logging.getLogger(__name__)
 
 
-class LitmusMinMaxMultiLabelClassificationStrategy(IStrategy):
+class LitmusNextMinMaxRegressionStrategy(IStrategy):
     """
-    Multi label classification strategy
+    Example strategy showing how the user connects their own
+    IFreqaiModel to the strategy. Namely, the user uses:
+    self.freqai.start(dataframe, metadata)
+    to make predictions on their data. populate_any_indicators() automatically
+    generates the variety of features indicated by the user in the
+    canonical freqtrade configuration file under config['freqai'].
     """
 
     minimal_roi = {"0": 0.1, "600": -1}
@@ -26,49 +33,32 @@ class LitmusMinMaxMultiLabelClassificationStrategy(IStrategy):
                 "do_predict": {"color": "brown"},
                 "DI_values": {"color": "grey"},
             },
-            "Maxima": {
-                "good_exit": {"color": "HotPink"},
-                "long_exit_target": {"color": "MediumVioletRed"},
-                "short_entry_target": {"color": "MediumVioletRed"},
-                "missed_maxima": {"color": "SpringGreen"},
-                "missed_long_exit_target": {"color": "DarkSeaGreen"},
-                "missed_short_entry_target": {"color": "DarkSeaGreen"},
+            "Trig": {
+                "&delta_minmax": {"color": "CornflowerBlue"},
+                "long_exit_target": {"color": "FireBrick"},
+                "long_entry_target": {"color": "DarkOliveGreen"},
+                "short_entry_target": {"color": "DarkOliveGreen"},
+                "short_exit_target": {"color": "FireBrick"},
             },
-            "Minima": {
-                "good_entry": {"color": "HotPink"},
-                "long_entry_target": {"color": "MediumVioletRed"},
-                "short_exit_target": {"color": "MediumVioletRed"},
-                "missed_minima": {"color": "SpringGreen"},
-                "missed_long_entry_target": {"color": "DarkSeaGreen"},
-                "missed_short_exit_target": {"color": "DarkSeaGreen"},
-            },
-            "Thrust": {
-                "upper": {"color": "DarkOliveGreen"},
-                "lower": {"color": "FireBrick"},
+            "Alts": {
+                "&delta_minmax_smooth": {"color": "CornflowerBlue"},
+                "&mean_future_close": {"color": "PaleGoldenRod"},
+                "&bb_width": {"color": "RosyBrown"}
             },
             "Real": {
-                "real-minima": {"color": "blue"},
-                "real-maxima": {"color": "yellow"}
+                "real_minima": {"color": "blue"},
+                "real_maxima": {"color": "yellow"}
             },
-            "Prec": {
-                "pr_auc_is_minima": {"color": "Thistle"},
-                "pr_auc_is_maxima": {"color": "SteelBlue"},
-                "pr_auc_missed_minima": {"color": "Wheat"},
-                "pr_auc_missed_maxima": {"color": "Plum"}
+            "Extra": {
+                "delta_minmax_plot": {"color": "Thistle"}
             },
         },
     }
 
-    # Stop loss config
-    stoploss = -0.05
-    trailing_stop = True
-    trailing_stop_positive = 0.02
-    trailing_stop_positive_offset = 0.03
-    trailing_only_offset_is_reached = True
-
     process_only_new_candles = True
+    stoploss = -0.05
     use_exit_signal = True
-    startup_candle_count = 300
+    startup_candle_count: int = 300
     can_short = True
 
     linear_roi_offset = DecimalParameter(
@@ -172,18 +162,40 @@ class LitmusMinMaxMultiLabelClassificationStrategy(IStrategy):
             df["%-day_of_week"] = df["date"].dt.dayofweek
             df["%-hour_of_day"] = df["date"].dt.hour
 
-            # Find all good entries and exits for longs
-            min_duration = 60
-            min_growth = 0.02
+            # Define Min & Max binary indicators
+            min_peaks = argrelextrema(df["close"].values, np.less, order=10)[0]
+            max_peaks = argrelextrema(df["close"].values, np.greater, order=10)[0]
 
-            long_labels = label_helpers.entry_exit_labeler(
-                df["close"], min_growth=min_growth, max_duration=min_duration
+            df["real_minima"] = 0
+            df["real_maxima"] = 0
+            df.loc[min_peaks, "real_minima"] = 1
+            df.loc[max_peaks, "real_maxima"] = 1
+
+            df["next_peak_close"] = np.nan
+            df.loc[min_peaks, "next_peak_close"] = df.loc[min_peaks, "close"]
+            df.loc[max_peaks, "next_peak_close"] = df.loc[max_peaks, "close"]
+            df["next_peak_close"].fillna(method="backfill", axis=0, inplace=True)
+
+            # Delta to Next Min/Max Regression Target
+            df["&delta_minmax"] = df["next_peak_close"].shift(-1) / df["close"] - 1
+            df["delta_minmax_plot"] = df["&delta_minmax"]
+
+            # Smoothed version of delta_minmax
+            smooth_window = 50
+            df["&delta_minmax_smooth"] = df["&delta_minmax"].rolling(smooth_window).mean()
+
+            # Predict basic lookahead mean price
+            df["&mean_future_close"] = (
+                df["close"]
+                .shift(-self.freqai_info["feature_parameters"]["label_period_candles"])
+                .rolling(self.freqai_info["feature_parameters"]["label_period_candles"])
+                .mean()
+                / df["close"]
+                - 1
             )
-            """short_labels = label_helpers.entry_exit_labeler(
-                df["close"], direction="short", min_growth=min_growth, max_duration=min_duration
-            )"""
 
-            df = pd.concat([df, long_labels], axis=1)
+            # Predict some form of volatility
+            # df["&bb_width"] = informative[f"%-{coin}-bb_width-period_20"]
 
         return df
 
@@ -191,40 +203,39 @@ class LitmusMinMaxMultiLabelClassificationStrategy(IStrategy):
 
         self.freqai_info = self.config["freqai"]
 
+        # All indicators must be populated by populate_any_indicators() for live functionality
+        # to work correctly.
+
+        # the model will return all labels created by user in `populate_any_indicators`
+        # (& appended targets), an indication of whether or not the prediction should be accepted,
+        # the target mean/std values for each of the labels created by user in
+        # `populate_any_indicators()` for each training period.
+
         dataframe = self.freqai.start(dataframe, metadata, self)
 
-        # enter_mul = 2.6
-        # exit_mul = 1.7
-        trigger_window = 300
-        print(dataframe.columns)
+        enter_mul = 1.0
+        exit_mul = 0.2
+        # trigger_window = 300
 
-        dataframe["test"] = dataframe["close"].rolling(trigger_window).mean()
-        """dataframe["is_maxima_mean"] = dataframe["is_maxima"].rolling(trigger_window).mean()
-        dataframe["is_maxima_std"] = dataframe["is_maxima"].rolling(trigger_window).std()
-        dataframe["is_minima_mean"] = dataframe["is_minima"].rolling(trigger_window).mean()
-        dataframe["is_minima_std"] = dataframe["is_minima"].rolling(trigger_window).std()
-
-        dataframe["missed_maxima_mean"] = dataframe["missed_maxima"].rolling(trigger_window).mean()
-        dataframe["missed_maxima_std"] = dataframe["missed_maxima"].rolling(trigger_window).std()
-        dataframe["missed_minima_mean"] = dataframe["missed_minima"].rolling(trigger_window).mean()
-        dataframe["missed_minima_std"] = dataframe["missed_minima"].rolling(trigger_window).std()
+        """dataframe["delta_minmax_mean"] = dataframe["&delta_minmax"].rolling(trigger_window).mean()
+        dataframe["delta_minmax_std"] = dataframe["&delta_minmax"].rolling(trigger_window).std()"""
 
         # Short
         dataframe["short_entry_target"] = (
-                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * enter_mul)
+                dataframe["&delta_minmax_mean"] - dataframe["&delta_minmax_std"] * enter_mul)
         dataframe["short_exit_target"] = (
-                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * exit_mul)
-        dataframe["missed_short_entry_target"] = (
+                dataframe["&delta_minmax_mean"] - dataframe["&delta_minmax_std"] * exit_mul)
+        """dataframe["missed_short_entry_target"] = (
                 dataframe["missed_maxima_mean"] + dataframe["missed_maxima_std"] * enter_mul)
         dataframe["missed_short_exit_target"] = (
-                dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * exit_mul)
+                dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * exit_mul)"""
 
         # Long
         dataframe["long_entry_target"] = (
-                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * enter_mul)
+                dataframe["&delta_minmax_mean"] + dataframe["&delta_minmax_std"] * enter_mul)
         dataframe["long_exit_target"] = (
-                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * exit_mul)
-        dataframe["missed_long_entry_target"] = (
+                dataframe["&delta_minmax_mean"] + dataframe["&delta_minmax_std"] * exit_mul)
+        """dataframe["missed_long_entry_target"] = (
                 dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * enter_mul)
         dataframe["missed_long_exit_target"] = (
                 dataframe["missed_maxima_mean"] + dataframe["missed_maxima_std"] * exit_mul)"""
@@ -234,36 +245,64 @@ class LitmusMinMaxMultiLabelClassificationStrategy(IStrategy):
     def populate_entry_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
         # Long Entry
-        conditions = [df["do_predict"] == 1, df["test"] > 0]
+        conditions = [df["do_predict"] == 1, df["&delta_minmax"] > df["long_entry_target"]]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
             ] = (1, "is_minima")
 
+        """# Missed Long Entry
+        conditions = [df["do_predict"] == 1, df["missed_minima"] > df["missed_long_entry_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
+            ] = (1, "missed_minima")"""
+
         # Short Entry
-        conditions = [df["do_predict"] == 1, df["test"] > 0]
+        conditions = [df["do_predict"] == 1, df["&delta_minmax"] < df["short_entry_target"]]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
             ] = (1, "is_maxima")
+
+        """# Missed Short Entry
+        conditions = [df["do_predict"] == 1, df["missed_maxima"] > df["missed_short_entry_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
+            ] = (1, "missed_maxima")"""
 
         return df
 
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
         # Long Exit
-        conditions = [1 == 1, df["test"] > 0]
+        conditions = [1 == 1, df["&delta_minmax"] < df["long_exit_target"]]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
             ] = (1, "is_maxima")
 
+        """# Missed Long Exit
+        conditions = [1 == 1, df["missed_maxima"] > df["missed_long_exit_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
+            ] = (1, "missed_maxima")"""
+
         # Short Exit
-        conditions = [1 == 1, df["test"] > 0]
+        conditions = [1 == 1, df["&delta_minmax"] > df["short_exit_target"]]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
             ] = (1, "is_minima")
+
+        """# Missed Short Exit
+        conditions = [1 == 1, df["missed_minima"] > df["missed_short_exit_target"]]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
+            ] = (1, "missed_minima")"""
 
         return df
 
