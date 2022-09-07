@@ -1,5 +1,5 @@
 
-from freqtrade.persistence import Trade
+# from freqtrade.persistence import Trade
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy, merge_informative_pair
 from functools import reduce
 from pandas import DataFrame
@@ -25,7 +25,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
     canonical freqtrade configuration file under config['freqai'].
     """
 
-    minimal_roi = {"0": 0.1, "600": -1}
+    minimal_roi = {"0": 0.1, "120": -1}
 
     plot_config = {
         "main_plot": {},
@@ -50,9 +50,6 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "missed_long_entry_target": {"color": "DarkSeaGreen"},
                 "missed_short_exit_target": {"color": "DarkSeaGreen"},
             },
-            "Next": {
-                "next_minmax_growth": {"color": "Grey"}
-            },
             "Real": {
                 "real-minima": {"color": "blue"},
                 "real-maxima": {"color": "yellow"}
@@ -63,15 +60,27 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "pr_auc_missed_minima": {"color": "Wheat"},
                 "pr_auc_missed_maxima": {"color": "Plum"}
             },
+            "F1": {
+                "max_f1_is_minima": {"color": "Thistle"},
+                "max_f1_is_maxima": {"color": "SteelBlue"},
+                "max_f1_missed_minima": {"color": "Wheat"},
+                "max_f1_missed_maxima": {"color": "Plum"}
+            },
+            "F1 Threshold": {
+                "max_f1_threshold_is_minima": {"color": "Thistle"},
+                "max_f1_threshold_is_maxima": {"color": "SteelBlue"},
+                "max_f1_threshold_missed_minima": {"color": "Wheat"},
+                "max_f1_threshold_missed_maxima": {"color": "Plum"}
+            },
         },
     }
 
     # Stop loss config
-    stoploss = -0.05
-    trailing_stop = True
-    trailing_stop_positive = 0.02
-    trailing_stop_positive_offset = 0.03
-    trailing_only_offset_is_reached = True
+    stoploss = -0.03
+    """trailing_stop = True
+    trailing_stop_positive_offset = 0.01
+    trailing_stop_positive = 0.005
+    trailing_only_offset_is_reached = True"""
 
     process_only_new_candles = True
     use_exit_signal = True
@@ -192,16 +201,34 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 df.at[mp, "real-minima"] = 1
                 df.at[mp, "&minmax-target"] = "is_minima"
                 df.at[mp + 1, "&minmax-target"] = "missed_minima"
-                df.at[mp + 2, "&minmax-target"] = "missed_minima"
+                # df.at[mp + 2, "&minmax-target"] = "missed_minima"
 
             # Maxima
             for mp in max_peaks:
                 df.at[mp, "real-maxima"] = 1
                 df.at[mp, "&minmax-target"] = "is_maxima"
                 df.at[mp + 1, "&minmax-target"] = "missed_maxima"
-                df.at[mp + 2, "&minmax-target"] = "missed_maxima"
+                # df.at[mp + 2, "&minmax-target"] = "missed_maxima"
 
-            # Next MinMax Regression
+            # Distance from prior minmax
+            df["prev_min_idx"] = np.nan
+            df["prev_max_idx"] = np.nan
+            # Horizontal
+            df.loc[min_peaks, "prev_min_idx"] = df.loc[min_peaks, "close"].index
+            df.loc[max_peaks, "prev_max_idx"] = df.loc[max_peaks, "close"].index
+            df["prev_min_idx"] = df["prev_min_idx"].fillna(method="ffill").fillna(0)
+            df["prev_max_idx"] = df["prev_max_idx"].fillna(method="ffill").fillna(0)
+            df["%prev_min_hdistance"] = df.index - df["prev_min_idx"]
+            df["%prev_max_hdistance"] = df.index - df["prev_max_idx"]
+            # Vertical
+            df.loc[min_peaks, "prev_min_close"] = df.loc[min_peaks, "close"]
+            df.loc[max_peaks, "prev_max_close"] = df.loc[max_peaks, "close"]
+            df["prev_min_close"] = df["prev_min_close"].fillna(method="ffill").fillna(0)
+            df["prev_max_close"] = df["prev_max_close"].fillna(method="ffill").fillna(0)
+            df["%prev_min_vdistance"] = df["close"] - df["prev_min_close"]
+            df["%prev_max_vdistance"] = df["close"] - df["prev_max_close"]
+
+            # Next MinMax Regression (Future)
             df["next_peak_close"] = np.nan
             df.loc[min_peaks, "next_peak_close"] = df.loc[min_peaks, "close"]
             df.loc[max_peaks, "next_peak_close"] = df.loc[max_peaks, "close"]
@@ -428,7 +455,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 logger.info("Short trade blocked due to excessive slippage")
                 return False
 
-        # Balance the number of long vs short positions
+        """# Balance the number of long vs short positions
         open_trades = Trade.get_trades(trade_filter=Trade.is_open.is_(True))
         num_shorts, num_longs = 0, 0
         for trade in open_trades:
@@ -443,6 +470,6 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             return False
         elif side == "short" and num_shorts >= max_long_short_trades:
             logger.info("Short trade blocked due to long/short imbalance")
-            return False
+            return False"""
 
         return True

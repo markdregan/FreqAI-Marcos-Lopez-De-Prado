@@ -5,11 +5,13 @@ import numpy.typing as npt
 import pandas as pd
 import time
 
-from catboost import CatBoostClassifier, Pool
+from catboost import CatBoostClassifier, Pool, EFeaturesSelectionAlgorithm, EShapCalcType
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
 from imblearn.over_sampling import SMOTE
 from pandas import DataFrame
+from sklearn.metrics import roc_auc_score, average_precision_score, precision_recall_curve
+from sklearn.preprocessing import LabelBinarizer
 from typing import Any, Dict, Tuple
 
 
@@ -117,8 +119,9 @@ class LitmusSingleTargetClassifier(IFreqaiModel):
         y_test = data_dictionary["train_labels"]
 
         # Address class imbalance
-        smote = SMOTE()
-        X_train, y_train = smote.fit_resample(X_train, y_train)
+        if self.freqai_info['feature_parameters'].get('use_smote', False):
+            smote = SMOTE()
+            X_train, y_train = smote.fit_resample(X_train, y_train)
 
         # Create Pool objs for catboost
         train_data = Pool(data=X_train, label=y_train)
@@ -128,9 +131,32 @@ class LitmusSingleTargetClassifier(IFreqaiModel):
             iterations=1000, loss_function="MultiClass", allow_writing_files=False,
             early_stopping_rounds=30, task_type="CPU", verbose=True)
 
-        model.fit(X=train_data, eval_set=eval_data)
+        # Feature selection logic
+        num_features_select = self.freqai_info['feature_parameters'].get('num_features_select', 0)
 
-        """# Model performance metrics
+        if num_features_select > 0:
+            all_feature_names = np.arange(len(X_train.columns))
+            summary = model.select_features(
+                X=train_data, eval_set=eval_data, num_features_to_select=500,
+                features_for_select=all_feature_names, steps=2,
+                algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
+                shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=True)
+
+            # Feature importance: All features selected and eliminated
+            selected = pd.DataFrame(summary["selected_features_names"], columns=["feature_name"])
+            selected["selected"] = True
+            eliminated = pd.DataFrame(
+                summary["eliminated_features_names"], columns=["feature_name"])
+            eliminated["selected"] = False
+            feature_df = pd.concat([selected, eliminated], ignore_index=True)
+            feature_df["pair"] = dk.pair
+            feature_df["train_time"] = time.time()
+            print(selected.head(50))
+
+        else:
+            model.fit(X=train_data, eval_set=eval_data)
+
+        # Model performance metrics
         encoder = LabelBinarizer()
         encoder.fit(y_train)
         y_test_enc = encoder.transform(y_test)
@@ -140,12 +166,24 @@ class LitmusSingleTargetClassifier(IFreqaiModel):
         for i, c in enumerate(encoder.classes_):
             # Area under ROC
             roc_auc = roc_auc_score(y_test_enc[:, i], y_pred_proba[:, i], average=None)
-            dk.data['extra_returns_per_train'][f"roc_auc_{c}"] = roc_auc
+            # dk.data['extra_returns_per_train'][f"roc_auc_{c}"] = roc_auc
             logger.info(f"{c} - ROC AUC score: {roc_auc}")
             # Area under precision recall curve
             pr_auc = average_precision_score(y_test_enc[:, i], y_pred_proba[:, i])
             dk.data['extra_returns_per_train'][f"pr_auc_{c}"] = pr_auc
-            logger.info(f"{c} - PR AUC score: {pr_auc}")"""
+            logger.info(f"{c} - PR AUC score: {pr_auc}")
+            # Max F1 Score and Optimum threshold
+            precision, recall, thresholds = precision_recall_curve(
+                y_test_enc[:, i], y_pred_proba[:, i])
+            numerator = 2 * recall * precision
+            denom = recall + precision
+            f1_scores = np.divide(numerator, denom, out=np.zeros_like(denom), where=(denom != 0))
+            max_f1 = np.max(f1_scores)
+            max_f1_thresh = thresholds[np.argmax(f1_scores)]
+            dk.data['extra_returns_per_train'][f"max_f1_{c}"] = max_f1
+            dk.data['extra_returns_per_train'][f"max_f1_threshold_{c}"] = max_f1_thresh
+            logger.info(f"{c} - Max F1 score: {max_f1}")
+            logger.info(f"{c} - Optimum Threshold Max F1 score: {max_f1_thresh}")
 
         end_time = time.time() - start_time
         dk.data['extra_returns_per_train']["time_to_train"] = end_time

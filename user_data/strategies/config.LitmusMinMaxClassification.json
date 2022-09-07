@@ -74,8 +74,8 @@
         "train_period_days": 20,
         "backtest_period_days": 2,
         "live_retrain_hours": 0.1,
-        "fit_live_predictions_candles": 200,
-        "identifier": "LitmusMinMax",
+        "fit_live_predictions_candles": 0,
+        "identifier": "LitmusMinMaxClassifier",
         "live_trained_timestamp": 0,
         "feature_parameters": {
             "include_timeframes": [
@@ -89,23 +89,41 @@
             "label_period_candles": 50,
             "include_shifted_candles": 4,
             "DI_threshold": 1.9,
-            "weight_factor": 0.9,
-            "principal_component_analysis": false,
+            "weight_factor": 0.7,
+            "principal_component_analysis": true,
             "use_SVM_to_remove_outliers": true,
             "stratify_training_data": 0,
             "indicator_max_period_candles": 300,
             "indicator_periods_candles": [10, 20, 50, 100],
-            "noise_standard_deviation": 0.05
+            "noise_standard_deviation": 0.05,
+            "reverse_train_test_order": false,
+            "num_features_select": 0,
+            "use_smote": true
         },
         "data_split_parameters": {
-            "test_size": 0.5,
-            "shuffle": true
+            "test_size": 0.6,
+            "shuffle": false
         },
         "model_training_parameters": {
 
         },
         "extra_returns_per_train": {
-            "time_to_train": 0
+            "time_to_train": 0,
+            "pr_auc_is_minima": 0,
+            "pr_auc_is_maxima": 0,
+            "pr_auc_missed_minima": 0,
+            "pr_auc_missed_maxima": 0,
+            "pr_auc_not_minmax": 0,
+            "max_f1_is_minima": 0,
+            "max_f1_is_maxima": 0,
+            "max_f1_missed_minima": 0,
+            "max_f1_missed_maxima": 0,
+            "max_f1_not_minmax": 0,
+            "max_f1_threshold_is_minima": 0,
+            "max_f1_threshold_is_maxima": 0,
+            "max_f1_threshold_missed_minima": 0,
+            "max_f1_threshold_missed_maxima": 0,
+            "max_f1_threshold_not_minmax": 0
         }
     },
     "telegram": {
