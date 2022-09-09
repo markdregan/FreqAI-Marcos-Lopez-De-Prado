@@ -215,19 +215,34 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
         enter_mul = 2.6
         exit_mul = 1.7
 
-        # Long
+        # Long entry targets
         dataframe["long_entry_target"] = (
-                dataframe["long_entry_mean"] + dataframe["long_entry_std"] * enter_mul)
+            dataframe["long_entry_mean"] + dataframe["long_entry_std"] * enter_mul)
+        dataframe["missed_long_entry_target"] = (
+            dataframe["missed_long_entry_mean"] + dataframe["missed_long_entry_std"] * enter_mul)
+        # Long exit targets
         dataframe["long_exit_target"] = (
-                dataframe["long_exit_mean"] + dataframe["long_exit_std"] * exit_mul)
+            dataframe["long_exit_mean"] + dataframe["long_exit_std"] * exit_mul)
+        dataframe["missed_long_exit_target"] = (
+            dataframe["missed_long_exit_mean"] + dataframe["missed_long_exit_std"] * exit_mul)
 
         return dataframe
 
     def populate_entry_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
         # Long Entry
-        conditions = [df["do_predict"] == 1,
-                      qtpylib.crossed_above(df["long_entry"], df["long_entry_target"])]
+        conditions = [
+            df["do_predict"] == 1,
+            qtpylib.crossed_above(df["long_entry"], df["long_entry_target"])]
+        if conditions:
+            df.loc[
+                reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
+            ] = (1, "long_entry")
+
+        # Missed Long Entry
+        conditions = [
+            df["do_predict"] == 1,
+            qtpylib.crossed_above(df["missed_long_entry"], df["missed_long_entry_target"])]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
@@ -238,7 +253,9 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
         # Long Exit
-        conditions = [1 == 1, qtpylib.crossed_below(df["long_exit"], df["long_exit_target"])]
+        conditions = [
+            1 == 1,
+            qtpylib.crossed_above(df["missed_long_exit"], df["missed_long_exit_target"])]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
