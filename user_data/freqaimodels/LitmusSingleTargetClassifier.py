@@ -118,6 +118,14 @@ class LitmusSingleTargetClassifier(IFreqaiModel):
         X_test = data_dictionary["train_features"]
         y_test = data_dictionary["train_labels"]
 
+        """# Filter features using tuneta
+        if self.freqai_info["feature_parameters"].get("tuneta_params", False):
+            tuneta_params = self.freqai_info["feature_parameters"].get("tuneta_params")
+            tt = TuneTA(n_jobs=4, verbose=True)
+            feature_names = tt.prune_df(X_train, y_train, **tuneta_params)
+            X_train = X_train[feature_names]
+            X_test = X_test[feature_names]"""
+
         # Address class imbalance
         if self.freqai_info['feature_parameters'].get('use_smote', False):
             smote = SMOTE()
@@ -128,16 +136,16 @@ class LitmusSingleTargetClassifier(IFreqaiModel):
         eval_data = Pool(data=X_test, label=y_test)
 
         model = CatBoostClassifier(
-            iterations=1000, loss_function="MultiClass", allow_writing_files=False,
-            early_stopping_rounds=30, task_type="CPU", verbose=True)
+            allow_writing_files=False,
+            **self.model_training_parameters
+        )
 
         # Feature selection logic
         num_features_select = self.freqai_info['feature_parameters'].get('num_features_select', 0)
-
         if num_features_select > 0:
             all_feature_names = np.arange(len(X_train.columns))
             summary = model.select_features(
-                X=train_data, eval_set=eval_data, num_features_to_select=500,
+                X=train_data, eval_set=eval_data, num_features_to_select=num_features_select,
                 features_for_select=all_feature_names, steps=2,
                 algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
                 shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=True)
@@ -151,10 +159,17 @@ class LitmusSingleTargetClassifier(IFreqaiModel):
             feature_df = pd.concat([selected, eliminated], ignore_index=True)
             feature_df["pair"] = dk.pair
             feature_df["train_time"] = time.time()
-            print(selected.head(50))
+            print(selected)
 
         else:
             model.fit(X=train_data, eval_set=eval_data)
+
+        """# Feature Importance Output
+        feature_imp = model.get_feature_importance(
+            data=eval_data, type=EFstrType.LossFunctionChange, prettified=True)
+        feature_imp["Importances"] = feature_imp["Importances"].rank(ascending=False)
+        print(feature_imp.head(50))
+        print(feature_imp.tail(50))"""
 
         # Model performance metrics
         encoder = LabelBinarizer()
@@ -166,7 +181,7 @@ class LitmusSingleTargetClassifier(IFreqaiModel):
         for i, c in enumerate(encoder.classes_):
             # Area under ROC
             roc_auc = roc_auc_score(y_test_enc[:, i], y_pred_proba[:, i], average=None)
-            # dk.data['extra_returns_per_train'][f"roc_auc_{c}"] = roc_auc
+            dk.data['extra_returns_per_train'][f"roc_auc_{c}"] = roc_auc
             logger.info(f"{c} - ROC AUC score: {roc_auc}")
             # Area under precision recall curve
             pr_auc = average_precision_score(y_test_enc[:, i], y_pred_proba[:, i])

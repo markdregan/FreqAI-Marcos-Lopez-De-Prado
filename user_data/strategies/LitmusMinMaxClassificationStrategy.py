@@ -3,14 +3,13 @@
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy, merge_informative_pair
 from functools import reduce
 from pandas import DataFrame
-from scipy.signal import argrelextrema
 from technical import qtpylib
 # from user_data.litmus import indicator_helpers
 
 import logging
-import numpy as np
 import pandas as pd
 import talib.abstract as ta
+import zigzag
 
 logger = logging.getLogger(__name__)
 
@@ -34,43 +33,40 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "do_predict": {"color": "brown"},
                 "DI_values": {"color": "grey"},
             },
-            "Maxima": {
-                "is_maxima": {"color": "HotPink"},
-                "long_exit_target": {"color": "MediumVioletRed"},
-                "short_entry_target": {"color": "MediumVioletRed"},
-                "missed_maxima": {"color": "SpringGreen"},
-                "missed_long_exit_target": {"color": "DarkSeaGreen"},
-                "missed_short_entry_target": {"color": "DarkSeaGreen"},
+            "Long": {
+                "long_entry": {"color": "SpringGreen"},
+                "missed_long_entry": {"color": "ForestGreen"},
+                "long_entry_target": {"color": "DarkSeaGreen"},
+                "long_exit": {"color": "Red"},
+                "missed_long_exit": {"color": "FireBrick"},
+                "long_exit_target": {"color": "DarkRed"},
             },
-            "Minima": {
-                "is_minima": {"color": "HotPink"},
-                "long_entry_target": {"color": "MediumVioletRed"},
-                "short_exit_target": {"color": "MediumVioletRed"},
-                "missed_minima": {"color": "SpringGreen"},
-                "missed_long_entry_target": {"color": "DarkSeaGreen"},
-                "missed_short_exit_target": {"color": "DarkSeaGreen"},
+            "Short": {
+
             },
             "Real": {
-                "real-minima": {"color": "blue"},
-                "real-maxima": {"color": "yellow"}
+                "real_long_peaks": {"color": "blue"}
             },
             "Prec": {
-                "pr_auc_is_minima": {"color": "Thistle"},
-                "pr_auc_is_maxima": {"color": "SteelBlue"},
-                "pr_auc_missed_minima": {"color": "Wheat"},
-                "pr_auc_missed_maxima": {"color": "Plum"}
+                "pr_auc_long_entry": {"color": "Thistle"},
+                "pr_auc_long_exit": {"color": "SteelBlue"},
+                "pr_auc_missed_long_entry": {"color": "Wheat"},
+                "pr_auc_missed_long_exit": {"color": "Plum"}
             },
             "F1": {
-                "max_f1_is_minima": {"color": "Thistle"},
-                "max_f1_is_maxima": {"color": "SteelBlue"},
-                "max_f1_missed_minima": {"color": "Wheat"},
-                "max_f1_missed_maxima": {"color": "Plum"}
+                "max_f1_long_entry": {"color": "Thistle"},
+                "max_f1_long_exit": {"color": "SteelBlue"},
+                "max_f1_missed_long_entry": {"color": "Wheat"},
+                "max_f1_missed_long_exit": {"color": "Plum"}
             },
             "F1 Threshold": {
-                "max_f1_threshold_is_minima": {"color": "Thistle"},
-                "max_f1_threshold_is_maxima": {"color": "SteelBlue"},
-                "max_f1_threshold_missed_minima": {"color": "Wheat"},
-                "max_f1_threshold_missed_maxima": {"color": "Plum"}
+                "max_f1_threshold_long_entry": {"color": "Thistle"},
+                "max_f1_threshold_long_exit": {"color": "SteelBlue"},
+                "max_f1_threshold_missed_long_entry": {"color": "Wheat"},
+                "max_f1_threshold_missed_long_exit": {"color": "Plum"}
+            },
+            "Time": {
+                "time_to_train": {"color": "blue"}
             },
         },
     }
@@ -188,66 +184,25 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             df["%-day_of_week"] = df["date"].dt.dayofweek
             df["%-hour_of_day"] = df["date"].dt.hour
 
-            # Define Min & Max binary indicators
-            min_peaks = argrelextrema(df["close"].values, np.less, order=15)[0]
-            max_peaks = argrelextrema(df["close"].values, np.greater, order=15)[0]
+            # Zigzag min/max for long positions
+            min_growth_long = self.freqai_info["labeling_parameters"].get(
+                "min_growth_long", -1)
+            min_retraction_long = self.freqai_info["labeling_parameters"].get(
+                "min_retraction_long", -1)
 
-            df["&minmax-target"] = "not_minmax"
-            df["real-minima"] = 0
-            df["real-maxima"] = 0
+            long_peaks = zigzag.peak_valley_pivots(
+                df["close"].values, min_growth_long, min_retraction_long)
+            name_map = {0: "not_minmax", 1: "long_exit", -1: "long_entry",
+                        2: "missed_long_exit", -2: "missed_long_entry"}
+            # Set first and last labels as 0
+            long_peaks[0] = long_peaks[-1] = 0
+            df["&long_target"] = long_peaks
+            df["&long_target"] = df["&long_target"].map(name_map)
+            df["real_long_peaks"] = long_peaks
 
-            # Minima
-            for mp in min_peaks:
-                df.at[mp, "real-minima"] = 1
-                df.at[mp, "&minmax-target"] = "is_minima"
-                df.at[mp + 1, "&minmax-target"] = "missed_minima"
-                # df.at[mp + 2, "&minmax-target"] = "missed_minima"
-
-            # Maxima
-            for mp in max_peaks:
-                df.at[mp, "real-maxima"] = 1
-                df.at[mp, "&minmax-target"] = "is_maxima"
-                df.at[mp + 1, "&minmax-target"] = "missed_maxima"
-                # df.at[mp + 2, "&minmax-target"] = "missed_maxima"
-
-            # Distance from prior minmax
-            df["prev_min_idx"] = np.nan
-            df["prev_max_idx"] = np.nan
-            # Horizontal
-            df.loc[min_peaks, "prev_min_idx"] = df.loc[min_peaks, "close"].index
-            df.loc[max_peaks, "prev_max_idx"] = df.loc[max_peaks, "close"].index
-            df["prev_min_idx"] = df["prev_min_idx"].fillna(method="ffill").fillna(0)
-            df["prev_max_idx"] = df["prev_max_idx"].fillna(method="ffill").fillna(0)
-            df["%prev_min_hdistance"] = df.index - df["prev_min_idx"]
-            df["%prev_max_hdistance"] = df.index - df["prev_max_idx"]
-            # Vertical
-            df.loc[min_peaks, "prev_min_close"] = df.loc[min_peaks, "close"]
-            df.loc[max_peaks, "prev_max_close"] = df.loc[max_peaks, "close"]
-            df["prev_min_close"] = df["prev_min_close"].fillna(method="ffill").fillna(0)
-            df["prev_max_close"] = df["prev_max_close"].fillna(method="ffill").fillna(0)
-            df["%prev_min_vdistance"] = df["close"] - df["prev_min_close"]
-            df["%prev_max_vdistance"] = df["close"] - df["prev_max_close"]
-
-            # Next MinMax Regression (Future)
-            df["next_peak_close"] = np.nan
-            df.loc[min_peaks, "next_peak_close"] = df.loc[min_peaks, "close"]
-            df.loc[max_peaks, "next_peak_close"] = df.loc[max_peaks, "close"]
-            df["next_peak_close"].fillna(method="backfill", axis=0, inplace=True)
-
-            # Delta to Next Min/Max Regression Target
-            df["next_minmax_growth"] = df["next_peak_close"].shift(-1) / df["close"] - 1
-
-            """# Triple barrier for magnitude of change
-            params = {"upper_pct": 0.02, "lower_pct": 0.02}
-            df["thrust"] = (
-                df["close"]
-                .shift(-self.freqai_info["feature_parameters"]["label_period_candles"])
-                .rolling(self.freqai_info["feature_parameters"]["label_period_candles"] + 1)
-                .apply(indicator_helpers.tripple_barrier, raw=False, kwargs=params)
-            )
-
-            lookup = {1: "upper", 2: "lower", 3: "vertical"}
-            df["thrust"] = df["thrust"].map(lookup)"""
+            # Missing entries & exits
+            df.loc[(df["&long_target"].shift(1) == name_map[1]), "&long_target"] = name_map[2]
+            df.loc[(df["&long_target"].shift(1) == name_map[-1]), "&long_target"] = name_map[-2]
 
         return df
 
@@ -259,101 +214,35 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         enter_mul = 2.6
         exit_mul = 1.7
-        trigger_window = 300
-
-        dataframe["is_maxima_mean"] = dataframe["is_maxima"].rolling(trigger_window).mean()
-        dataframe["is_maxima_std"] = dataframe["is_maxima"].rolling(trigger_window).std()
-        dataframe["is_minima_mean"] = dataframe["is_minima"].rolling(trigger_window).mean()
-        dataframe["is_minima_std"] = dataframe["is_minima"].rolling(trigger_window).std()
-
-        dataframe["missed_maxima_mean"] = dataframe["missed_maxima"].rolling(trigger_window).mean()
-        dataframe["missed_maxima_std"] = dataframe["missed_maxima"].rolling(trigger_window).std()
-        dataframe["missed_minima_mean"] = dataframe["missed_minima"].rolling(trigger_window).mean()
-        dataframe["missed_minima_std"] = dataframe["missed_minima"].rolling(trigger_window).std()
-
-        # Short
-        dataframe["short_entry_target"] = (
-                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * enter_mul)
-        dataframe["short_exit_target"] = (
-                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * exit_mul)
-        dataframe["missed_short_entry_target"] = (
-                dataframe["missed_maxima_mean"] + dataframe["missed_maxima_std"] * enter_mul)
-        dataframe["missed_short_exit_target"] = (
-                dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * exit_mul)
 
         # Long
         dataframe["long_entry_target"] = (
-                dataframe["is_minima_mean"] + dataframe["is_minima_std"] * enter_mul)
+                dataframe["long_entry_mean"] + dataframe["long_entry_std"] * enter_mul)
         dataframe["long_exit_target"] = (
-                dataframe["is_maxima_mean"] + dataframe["is_maxima_std"] * exit_mul)
-        dataframe["missed_long_entry_target"] = (
-                dataframe["missed_minima_mean"] + dataframe["missed_minima_std"] * enter_mul)
-        dataframe["missed_long_exit_target"] = (
-                dataframe["missed_maxima_mean"] + dataframe["missed_maxima_std"] * exit_mul)
+                dataframe["long_exit_mean"] + dataframe["long_exit_std"] * exit_mul)
 
         return dataframe
 
     def populate_entry_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
         # Long Entry
-        conditions = [df["do_predict"] == 1, df["is_minima"] > df["long_entry_target"]]
+        conditions = [df["do_predict"] == 1,
+                      qtpylib.crossed_above(df["long_entry"], df["long_entry_target"])]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
-            ] = (1, "is_minima")
-
-        # Missed Long Entry
-        conditions = [df["do_predict"] == 1, df["missed_minima"] > df["missed_long_entry_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
-            ] = (1, "missed_minima")
-
-        # Short Entry
-        conditions = [df["do_predict"] == 1, df["is_maxima"] > df["short_entry_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
-            ] = (1, "is_maxima")
-
-        # Missed Short Entry
-        conditions = [df["do_predict"] == 1, df["missed_maxima"] > df["missed_short_entry_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
-            ] = (1, "missed_maxima")
+            ] = (1, "long_entry")
 
         return df
 
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
         # Long Exit
-        conditions = [1 == 1, df["is_maxima"] > df["long_exit_target"]]
+        conditions = [1 == 1, qtpylib.crossed_below(df["long_exit"], df["long_exit_target"])]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
-            ] = (1, "is_maxima")
-
-        # Missed Long Exit
-        conditions = [1 == 1, df["missed_maxima"] > df["missed_long_exit_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
-            ] = (1, "missed_maxima")
-
-        # Short Exit
-        conditions = [1 == 1, df["is_minima"] > df["short_exit_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
-            ] = (1, "is_minima")
-
-        # Missed Short Exit
-        conditions = [1 == 1, df["missed_minima"] > df["missed_short_exit_target"]]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
-            ] = (1, "missed_minima")
+            ] = (1, "long_exit")
 
         return df
 
@@ -442,7 +331,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
         **kwargs,
     ) -> bool:
 
-        # Ensure excessive slippage is avoided
+        """# Ensure excessive slippage is avoided
         df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
         last_candle = df.iloc[-1].squeeze()
 
@@ -453,7 +342,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
         else:
             if rate < (last_candle["close"] * (1 - 0.0025)):
                 logger.info("Short trade blocked due to excessive slippage")
-                return False
+                return False"""
 
         """# Balance the number of long vs short positions
         open_trades = Trade.get_trades(trade_filter=Trade.is_open.is_(True))
