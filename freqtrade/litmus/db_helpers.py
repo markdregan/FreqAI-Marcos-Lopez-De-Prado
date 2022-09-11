@@ -9,7 +9,7 @@ import sqlalchemy
 logger = logging.getLogger(__name__)
 
 
-def save_feature_importance(df, table_name):
+def save_df_to_db(df, table_name):
     """Save pandas dataframe to sqlite3"""
 
     # Initialize sqlite database

@@ -27,13 +27,22 @@
             "rateLimit": 200
         },
         "pair_whitelist": [
-	        "1INCH/USDT",
-	        "AAVE/USDT"
+	        "1INCH/USDT"
         ],
         "pair_blacklist": []
     },
+    "order_types": {
+        "entry": "market",
+        "exit": "market",
+        "emergency_exit": "market",
+        "force_entry": "market",
+        "force_exit": "market",
+        "stoploss": "market",
+        "stoploss_on_exchange": false,
+        "stoploss_on_exchange_interval": 60
+    },
     "entry_pricing": {
-        "price_side": "same",
+        "price_side": "other",
         "use_order_book": true,
         "order_book_top": 1,
         "price_last_balance": 0.0,
@@ -54,46 +63,68 @@
     ],
     "freqai": {
         "enabled": true,
-        "startup_candles": 10000,
         "purge_old_models": true,
-        "train_period_days": 20,
+        "train_period_days": 30,
         "backtest_period_days": 2,
-        "live_retrain_hours": 0.25,
+        "live_retrain_hours": 0.1,
         "fit_live_predictions_candles": 200,
-        "identifier": "Litmus-01",
-        "classifier": true,
+        "identifier": "LitmusMinMaxClassifier",
         "live_trained_timestamp": 0,
         "feature_parameters": {
             "include_timeframes": [
                 "3m",
-                "15m",
-                "1h"
+                "30m",
+                "2h"
             ],
             "include_corr_pairlist": [
-                "BTC/USDT",
-                "ETH/USDT"
+                "BTC/USDT"
             ],
-            "label_period_candles": 80,
+            "label_period_candles": 6,
             "include_shifted_candles": 2,
-            "DI_threshold": 0.9,
-            "weight_factor": 0.9,
+            "DI_threshold": 1.9,
+            "weight_factor": 0.7,
             "principal_component_analysis": false,
             "use_SVM_to_remove_outliers": true,
+            "svm_params": {"shuffle": false, "nu": 0.05},
             "stratify_training_data": 0,
-            "indicator_max_period_candles": 100,
-            "indicator_periods_candles": [10, 20, 50, 100]
+            "indicator_max_period_candles": 300,
+            "indicator_periods_candles": [10, 20, 50, 100],
+            "noise_standard_deviation": 0.06,
+            "reverse_train_test_order": false,
+            "use_feature_selection_routine": true,
+            "feature_selection_params": {
+                "num_features_select": 300,
+                "steps": 2
+            },
+            "use_smote": false
         },
         "data_split_parameters": {
-            "test_size": 0.3,
+            "test_size": 0.6,
             "shuffle": false
         },
-        "model_training_parameters": {
-            "n_estimators": 2000,
-            "task_type": "CPU",
-            "verbose": false,
-            "early_stopping_rounds": 20
+        "labeling_parameters": {
+            "min_growth_long": 0.006,
+            "min_retraction_long": -0.003,
+            "tbm_upper": 0.006,
+            "tbm_lower": 0.006
         },
-        "extra_returns_per_train": {"total_profit": 4}
+        "model_training_parameters": {
+            "n_estimators": 1000, "loss_function": "MultiClass",
+            "early_stopping_rounds": 40, "task_type": "CPU", "verbose": true
+        },
+        "extra_returns_per_train": {
+            "time_to_train": 0,
+            "max_f1_long_entry": 0,
+            "max_f1_long_exit": 0,
+            "max_f1_missed_long_entry": 0,
+            "max_f1_missed_long_exit": 0,
+            "max_f1_not_minmax": 0,
+            "max_f1_threshold_long_entry": 0,
+            "max_f1_threshold_long_exit": 0,
+            "max_f1_threshold_missed_long_entry": 0,
+            "max_f1_threshold_missed_long_exit": 0,
+            "max_f1_threshold_not_minmax": 0
+        }
     },
     "telegram": {
         "enabled": false,

@@ -9,6 +9,7 @@ from catboost import CatBoostClassifier, Pool, EFeaturesSelectionAlgorithm, ESha
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
 from freqtrade.litmus.model_helpers import MergedModel
+from freqtrade.litmus.db_helpers import save_df_to_db
 from imblearn.over_sampling import SMOTE
 from pandas import DataFrame
 from sklearn.metrics import roc_auc_score, average_precision_score, precision_recall_curve
@@ -65,10 +66,10 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
         )
         logger.info(f'Training model on {len(data_dictionary["train_features"])} data points')
 
-        # Pass back mask df with index for subsampling (added my marrkdregan)
-        tbm_mask = unfiltered_dataframe["tbm_mask"]
+        # Pass back mask df with index for subsampling (added my markdregan)
+        dk.data_dictionary["tbm_mask"] = unfiltered_dataframe["tbm_mask"]
 
-        model = self.fit(data_dictionary, dk, tbm_mask)
+        model = self.fit(data_dictionary, dk)
 
         logger.info(f"--------------------done training {pair}--------------------")
 
@@ -105,7 +106,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
 
         return (pred_df, dk.do_predict)
 
-    def fit(self, data_dictionary: Dict, dk: FreqaiDataKitchen, tbm_mask) -> Any:
+    def fit(self, data_dictionary: Dict, dk: FreqaiDataKitchen) -> Any:
         """
         User sets up the training and test data to fit their desired model here
         :params:
@@ -124,8 +125,9 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             y_test = data_dictionary["train_labels"][t]
 
             if t == "&tripple_barrier":
-                # Subsample (remove rows) using `tbm_mask`
+                # Sub-sample (remove rows) using `tbm_mask`
                 logger.info(f"Before subsampling, X_train size: {X_train.shape}")
+                tbm_mask = dk.data_dictionary["tbm_mask"]
                 tbm_mask_idx = tbm_mask.loc[tbm_mask].index
                 y_train = y_train.loc[np.isin(y_train.index, tbm_mask_idx)]
                 X_train = X_train.loc[np.isin(X_train.index, tbm_mask_idx)]
@@ -175,7 +177,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 feature_df["pair"] = dk.pair
                 feature_df["train_time"] = time.time()
                 feature_df.set_index(keys=["train_time", "pair", "feature_name"], inplace=True)
-                # db_helpers.save_feature_importance(df=feature_df, table_name="feature_importance")
+                save_df_to_db(df=feature_df, table_name="feature_selection_history")
 
             else:
                 model.fit(X=train_data, eval_set=eval_data)
@@ -190,11 +192,9 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             for i, c in enumerate(encoder.classes_):
                 # Area under ROC
                 roc_auc = roc_auc_score(y_test_enc[:, i], y_pred_proba[:, i], average=None)
-                dk.data['extra_returns_per_train'][f"roc_auc_{c}"] = roc_auc
                 logger.info(f"{c} - ROC AUC score: {roc_auc}")
                 # Area under precision recall curve
                 pr_auc = average_precision_score(y_test_enc[:, i], y_pred_proba[:, i])
-                dk.data['extra_returns_per_train'][f"pr_auc_{c}"] = pr_auc
                 logger.info(f"{c} - PR AUC score: {pr_auc}")
                 # Max F1 Score and Optimum threshold
                 precision, recall, thresholds = precision_recall_curve(
@@ -219,3 +219,22 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
         logger.info(f"Time taken to select best features & train model: {end_time} seconds")
 
         return model
+
+    """def data_cleaning_train(self, dk: FreqaiDataKitchen) -> None:
+
+        super().data_cleaning_train(dk)
+
+        # Filter rows from training data
+        tbm_mask = dk.data_dictionary["train_features"]["tbm_mask"]
+        dk.data_dictionary["train_features"] = dk.data_dictionary["train_features"].loc[tbm_mask]
+        dk.data_dictionary["train_labels"] = dk.data_dictionary["train_labels"].loc[tbm_mask]
+        dk.data_dictionary["train_weights"] = dk.data_dictionary["train_weights"].loc[tbm_mask]
+        dk.data_dictionary["train_dates"] = dk.data_dictionary["train_weights"].loc[tbm_mask]
+
+        # Filter rows from test data
+        tbm_mask = dk.data_dictionary["test_features"]["tbm_mask"]
+        dk.data_dictionary["test_features"] = dk.data_dictionary["test_features"].loc[tbm_mask]
+        dk.data_dictionary["test_labels"] = dk.data_dictionary["test_labels"].loc[tbm_mask]
+        dk.data_dictionary["test_weights"] = dk.data_dictionary["test_weights"].loc[tbm_mask]
+        dk.data_dictionary["test_dates"] = dk.data_dictionary["test_weights"].loc[tbm_mask]
+        """

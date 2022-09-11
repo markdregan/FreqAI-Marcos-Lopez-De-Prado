@@ -3,6 +3,13 @@ import numpy as np
 
 
 class MergedModel:
+    """Used for packaging multiple models together so that freqai can pickle the
+    object for later usage
+
+    Example usage:
+        models = []
+        models.append(model)
+        model = MergedModel(models)"""
 
     def __init__(self, models):
         self.models = models
