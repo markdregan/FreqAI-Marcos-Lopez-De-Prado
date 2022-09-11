@@ -1,12 +1,12 @@
 
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
-from freqtrade.persistence import Trade
+# from freqtrade.persistence import Trade
 from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy, merge_informative_pair
 from functools import reduce
 from pandas import DataFrame
 from scipy.signal import argrelextrema
 from technical import qtpylib
-from user_data.litmus import indicator_helpers
+from freqtrade.litmus import indicator_helpers
 
 import logging
 import numpy as np
@@ -335,7 +335,7 @@ class LitmusMinMaxStrategy(IStrategy):
             return "roi_custom_loss"
             """
 
-    def confirm_trade_exit(
+    """def confirm_trade_exit(
         self,
         pair: str,
         trade: Trade,
@@ -355,14 +355,13 @@ class LitmusMinMaxStrategy(IStrategy):
         else:
             pair_dict = self.freqai.dd.follower_dict
 
-        with self.freqai.lock:
-            pair_dict[pair]["prediction" + entry_tag] = 0
-            if not follow_mode:
-                self.freqai.dd.save_drawer_to_disk()
-            else:
-                self.freqai.dd.save_follower_dict_to_disk()
+        pair_dict[pair]["prediction" + entry_tag] = 0
+        if not follow_mode:
+            self.freqai.dd.save_drawer_to_disk()
+        else:
+            self.freqai.dd.save_follower_dict_to_disk()
 
-        return True
+        return True"""
 
     def confirm_trade_entry(
         self,

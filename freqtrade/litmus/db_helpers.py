@@ -2,8 +2,8 @@
 
 import logging
 
-import sqlalchemy
 import pangres
+import sqlalchemy
 
 
 logger = logging.getLogger(__name__)

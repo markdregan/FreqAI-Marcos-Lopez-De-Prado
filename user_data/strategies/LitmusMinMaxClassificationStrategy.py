@@ -4,7 +4,6 @@ from freqtrade.strategy import DecimalParameter, IntParameter, IStrategy, merge_
 from functools import reduce
 from pandas import DataFrame
 from technical import qtpylib
-# from user_data.litmus import indicator_helpers
 
 import logging
 import pandas as pd
@@ -16,15 +15,13 @@ logger = logging.getLogger(__name__)
 
 class LitmusMinMaxClassificationStrategy(IStrategy):
     """
-    Example strategy showing how the user connects their own
-    IFreqaiModel to the strategy. Namely, the user uses:
-    self.freqai.start(dataframe, metadata)
-    to make predictions on their data. populate_any_indicators() automatically
-    generates the variety of features indicated by the user in the
-    canonical freqtrade configuration file under config['freqai'].
+    to run this:
+      freqtrade trade --strategy LitmusMinMaxClassificationStrategy
+      --config user_data/strategies/config.LitmusMinMaxClassification.json
+      --freqaimodel LitmusSingleTargetClassifier --verbose
     """
 
-    minimal_roi = {"0": 0.1, "120": -1}
+    minimal_roi = {"0": 0.1, "240": -1}
 
     plot_config = {
         "main_plot": {},
@@ -34,39 +31,45 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "DI_values": {"color": "grey"},
             },
             "Long": {
-                "long_entry": {"color": "SpringGreen"},
+                "long_entry": {"color": "PaleGreen "},
                 "missed_long_entry": {"color": "ForestGreen"},
-                "long_entry_target": {"color": "DarkSeaGreen"},
-                "long_exit": {"color": "Red"},
-                "missed_long_exit": {"color": "FireBrick"},
-                "long_exit_target": {"color": "DarkRed"},
-            },
-            "Short": {
-
+                "long_entry_target": {"color": "PaleGreen "},
+                "missed_long_entry_target": {"color": "ForestGreen"},
+                "long_exit": {"color": "Salmon"},
+                "missed_long_exit": {"color": "Crimson "},
+                "missed_long_exit_target": {"color": "Crimson "},
             },
             "Real": {
                 "real_long_peaks": {"color": "blue"}
             },
             "Prec": {
-                "pr_auc_long_entry": {"color": "Thistle"},
-                "pr_auc_long_exit": {"color": "SteelBlue"},
-                "pr_auc_missed_long_entry": {"color": "Wheat"},
-                "pr_auc_missed_long_exit": {"color": "Plum"}
+                "pr_auc_long_entry": {"color": "PaleGreen"},
+                "pr_auc_long_exit": {"color": "Salmon"},
+                "pr_auc_missed_long_entry": {"color": "ForestGreen"},
+                "pr_auc_missed_long_exit": {"color": "Crimson"}
             },
             "F1": {
-                "max_f1_long_entry": {"color": "Thistle"},
-                "max_f1_long_exit": {"color": "SteelBlue"},
-                "max_f1_missed_long_entry": {"color": "Wheat"},
-                "max_f1_missed_long_exit": {"color": "Plum"}
+                "max_f1_long_entry": {"color": "PaleGreen"},
+                "max_f1_long_exit": {"color": "Salmon"},
+                "max_f1_missed_long_entry": {"color": "ForestGreen"},
+                "max_f1_missed_long_exit": {"color": "Crimson"}
             },
             "F1 Threshold": {
-                "max_f1_threshold_long_entry": {"color": "Thistle"},
-                "max_f1_threshold_long_exit": {"color": "SteelBlue"},
-                "max_f1_threshold_missed_long_entry": {"color": "Wheat"},
-                "max_f1_threshold_missed_long_exit": {"color": "Plum"}
+                "max_f1_threshold_long_entry": {"color": "PaleGreen"},
+                "max_f1_threshold_long_exit": {"color": "Salmon"},
+                "max_f1_threshold_missed_long_entry": {"color": "ForestGreen"},
+                "max_f1_threshold_missed_long_exit": {"color": "Crimson"}
             },
             "Time": {
-                "time_to_train": {"color": "blue"}
+                "time_to_train": {"color": "DarkGray"}
+            },
+            "TBM T": {
+                "tripple_barrier_int": {"color": "DarkGray"}
+            },
+            "TBM P": {
+                "upper_barrier": {"color": "Green"},
+                "lower_barrier": {"color": "Red"},
+                "vertical_barrier": {"color": "Purple"}
             },
         },
     }
@@ -184,23 +187,22 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             df["%-day_of_week"] = df["date"].dt.dayofweek
             df["%-hour_of_day"] = df["date"].dt.hour
 
-            # Zigzag min/max for long positions
+            # Zigzag min/max for long pivot positions
             min_growth_long = self.freqai_info["labeling_parameters"].get(
                 "min_growth_long", -1)
             min_retraction_long = self.freqai_info["labeling_parameters"].get(
                 "min_retraction_long", -1)
-
             long_peaks = zigzag.peak_valley_pivots(
                 df["close"].values, min_growth_long, min_retraction_long)
             name_map = {0: "not_minmax", 1: "long_exit", -1: "long_entry",
                         2: "missed_long_exit", -2: "missed_long_entry"}
-            # Set first and last labels as 0
-            long_peaks[0] = long_peaks[-1] = 0
+            long_peaks[0] = 0  # Set first value of peaks = 0
+            long_peaks[-1] = 0  # Set last value of peaks = 0
             df["&long_target"] = long_peaks
             df["&long_target"] = df["&long_target"].map(name_map)
             df["real_long_peaks"] = long_peaks
 
-            # Missing entries & exits
+            # Missed entries & exits (labels)
             df.loc[(df["&long_target"].shift(1) == name_map[1]), "&long_target"] = name_map[2]
             df.loc[(df["&long_target"].shift(1) == name_map[-1]), "&long_target"] = name_map[-2]
 
@@ -232,7 +234,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         # Long Entry
         conditions = [
-            df["do_predict"] == 1,
+            1 == 1,
             qtpylib.crossed_above(df["long_entry"], df["long_entry_target"])]
         if conditions:
             df.loc[
@@ -241,12 +243,12 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         # Missed Long Entry
         conditions = [
-            df["do_predict"] == 1,
+            1 == 1,
             qtpylib.crossed_above(df["missed_long_entry"], df["missed_long_entry_target"])]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
-            ] = (1, "long_entry")
+            ] = (1, "missed_long_entry")
 
         return df
 
@@ -259,7 +261,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
-            ] = (1, "long_exit")
+            ] = (1, "missed_long_exit")
 
         return df
 
@@ -379,3 +381,34 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             return False"""
 
         return True
+
+
+def tripple_barrier(df_col, upper_pct, lower_pct):
+    """Return label associated with first time crossing of vertical, upper or lower barrier
+
+    Example useage:
+        df["tripple_barrier"] = (
+            df["close"]
+            .shift(-window)
+            .rolling(window + 1)
+            .apply(tripple_barrier, kwargs=params)
+        )
+    """
+
+    initial_value = df_col.iat[0]
+    upper_threshold = initial_value * (1 + upper_pct)
+    lower_threshold = initial_value * (1 - lower_pct)
+
+    # Get index position of first time upper & lower are crossed
+    upper_idx = (df_col > upper_threshold).argmax() if (df_col > upper_threshold).any() else 99999
+    lower_idx = (df_col < lower_threshold).argmax() if (df_col < lower_threshold).any() else 99999
+
+    # Based on first crossing, assign appropriate label
+    if upper_idx < lower_idx:
+        barrier = 1
+    elif lower_idx < upper_idx:
+        barrier = -1
+    else:
+        barrier = 0
+
+    return barrier

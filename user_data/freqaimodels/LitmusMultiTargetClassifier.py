@@ -5,16 +5,15 @@ import numpy.typing as npt
 import pandas as pd
 import time
 
-from catboost import CatBoostClassifier, Pool
+from catboost import CatBoostClassifier, Pool, EFeaturesSelectionAlgorithm, EShapCalcType
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
-from user_data.litmus.model_helpers import MergedModel
+from freqtrade.litmus.model_helpers import MergedModel
 from imblearn.over_sampling import SMOTE
 from pandas import DataFrame
-from sklearn.metrics import roc_auc_score, average_precision_score
+from sklearn.metrics import roc_auc_score, average_precision_score, precision_recall_curve
 from sklearn.preprocessing import LabelBinarizer
 from typing import Any, Dict, Tuple
-
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
     """
 
     def train(
-        self, unfiltered_dataframe: DataFrame, pair: str, dk: FreqaiDataKitchen
+            self, unfiltered_dataframe: DataFrame, pair: str, dk: FreqaiDataKitchen
     ) -> Any:
         """
         Filter the training data and train a model to it. Train makes heavy use of the datakitchen
@@ -66,7 +65,10 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
         )
         logger.info(f'Training model on {len(data_dictionary["train_features"])} data points')
 
-        model = self.fit(data_dictionary, dk)
+        # Pass back mask df with index for subsampling (added my marrkdregan)
+        tbm_mask = unfiltered_dataframe["tbm_mask"]
+
+        model = self.fit(data_dictionary, dk, tbm_mask)
 
         logger.info(f"--------------------done training {pair}--------------------")
 
@@ -103,7 +105,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
 
         return (pred_df, dk.do_predict)
 
-    def fit(self, data_dictionary: Dict, dk: FreqaiDataKitchen) -> Any:
+    def fit(self, data_dictionary: Dict, dk: FreqaiDataKitchen, tbm_mask) -> Any:
         """
         User sets up the training and test data to fit their desired model here
         :params:
@@ -113,6 +115,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
 
         start_time = time.time()
         models = []
+
         for t in data_dictionary["train_labels"].columns:
             # Swap train and test data
             X_train = data_dictionary["test_features"]
@@ -120,50 +123,62 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             X_test = data_dictionary["train_features"]
             y_test = data_dictionary["train_labels"][t]
 
+            if t == "&tripple_barrier":
+                # Subsample (remove rows) using `tbm_mask`
+                logger.info(f"Before subsampling, X_train size: {X_train.shape}")
+                tbm_mask_idx = tbm_mask.loc[tbm_mask].index
+                y_train = y_train.loc[np.isin(y_train.index, tbm_mask_idx)]
+                X_train = X_train.loc[np.isin(X_train.index, tbm_mask_idx)]
+                y_test = y_test.loc[np.isin(y_test.index, tbm_mask_idx)]
+                X_test = X_test.loc[np.isin(X_test.index, tbm_mask_idx)]
+                logger.info(f"After subsampling, X_train size: {X_train.shape}")
+
             # Address class imbalance
-            smote = SMOTE()
-            X_train, y_train = smote.fit_resample(X_train, y_train)
+            if self.freqai_info['feature_parameters'].get('use_smote', False):
+                smote = SMOTE()
+                X_train, y_train = smote.fit_resample(X_train, y_train)
 
             # Create Pool objs for catboost
             train_data = Pool(data=X_train, label=y_train)
             eval_data = Pool(data=X_test, label=y_test)
 
             model = CatBoostClassifier(
-                iterations=1000, loss_function="MultiClass", allow_writing_files=False,
-                early_stopping_rounds=30, task_type="CPU", verbose=False)
+                allow_writing_files=False,
+                **self.model_training_parameters
+            )
 
-            """all_feature_names = np.arange(len(X_train.columns))
-            summary = model.select_features(
-                X=train_data, eval_set=eval_data, num_features_to_select=500,
-                features_for_select=all_feature_names, steps=2,
-                algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
-                shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=False)
+            # Feature selection logic
+            if self.freqai_info['feature_parameters'].get("use_feature_selection_routine", False):
+                # Get config params for feature selection
+                feature_selection_params = self.freqai_info['feature_parameters'].get(
+                    "feature_selection_params", 0)
 
-            # Feature importance: All features selected and eliminated
-            selected = pd.DataFrame(summary["selected_features_names"], columns=["feature_name"])
-            selected["selected"] = True
-            eliminated = pd.DataFrame(
-                summary["eliminated_features_names"], columns=["feature_name"])
-            eliminated["selected"] = False
-            feature_df = pd.concat([selected, eliminated], ignore_index=True)
-            feature_df["pair"] = dk.pair
-            feature_df["train_time"] = time.time()
+                # Run feature selection
+                all_feature_names = np.arange(len(X_train.columns))
+                summary = model.select_features(
+                    X=train_data, eval_set=eval_data,
+                    num_features_to_select=feature_selection_params["num_features_select"],
+                    features_for_select=all_feature_names, steps=feature_selection_params["steps"],
+                    algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
+                    shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=True)
 
-            # Feature Importance: Scores for selected features
-            selected_importances = model.get_feature_importance(
-                data=eval_data, type=EFstrType.LossFunctionChange, prettified=True)
-            selected_importances["rank"] = selected_importances["Importances"].rank(ascending=False)
+                # Selected Features
+                selected = pd.DataFrame(summary["selected_features_names"],
+                                        columns=["feature_name"])
+                selected["selected"] = True
+                # Eliminated Features
+                eliminated = pd.DataFrame(
+                    summary["eliminated_features_names"], columns=["feature_name"])
+                eliminated["selected"] = False
+                # Save to Database
+                feature_df = pd.concat([selected, eliminated], ignore_index=True)
+                feature_df["pair"] = dk.pair
+                feature_df["train_time"] = time.time()
+                feature_df.set_index(keys=["train_time", "pair", "feature_name"], inplace=True)
+                # db_helpers.save_feature_importance(df=feature_df, table_name="feature_importance")
 
-            # Join
-            feature_df = feature_df.merge(
-                selected_importances, how="outer", left_on="feature_name", right_on="Feature Id")
-            feature_df.drop(columns="Feature Id", inplace=True)
-            feature_df.set_index(keys=["train_time", "pair", "feature_name"], inplace=True)
-            db_helpers.save_feature_importance(df=feature_df, table_name="feature_importance")
-
-            else:"""
-
-            model.fit(X=train_data, eval_set=eval_data)
+            else:
+                model.fit(X=train_data, eval_set=eval_data)
 
             # Model performance metrics
             encoder = LabelBinarizer()
@@ -181,6 +196,19 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 pr_auc = average_precision_score(y_test_enc[:, i], y_pred_proba[:, i])
                 dk.data['extra_returns_per_train'][f"pr_auc_{c}"] = pr_auc
                 logger.info(f"{c} - PR AUC score: {pr_auc}")
+                # Max F1 Score and Optimum threshold
+                precision, recall, thresholds = precision_recall_curve(
+                    y_test_enc[:, i], y_pred_proba[:, i])
+                numerator = 2 * recall * precision
+                denom = recall + precision
+                f1_scores = np.divide(numerator, denom, out=np.zeros_like(denom),
+                                      where=(denom != 0))
+                max_f1 = np.max(f1_scores)
+                max_f1_thresh = thresholds[np.argmax(f1_scores)]
+                dk.data['extra_returns_per_train'][f"max_f1_{c}"] = max_f1
+                dk.data['extra_returns_per_train'][f"max_f1_threshold_{c}"] = max_f1_thresh
+                logger.info(f"{c} - Max F1 score: {max_f1}")
+                logger.info(f"{c} - Optimum Threshold Max F1 score: {max_f1_thresh}")
 
             models.append(model)
 

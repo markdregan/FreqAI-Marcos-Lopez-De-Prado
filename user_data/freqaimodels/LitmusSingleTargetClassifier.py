@@ -13,6 +13,7 @@ from pandas import DataFrame
 from sklearn.metrics import roc_auc_score, average_precision_score, precision_recall_curve
 from sklearn.preprocessing import LabelBinarizer
 from typing import Any, Dict, Tuple
+# from user_data.litmus import db_helpers
 
 
 logger = logging.getLogger(__name__)
@@ -118,14 +119,6 @@ class LitmusSingleTargetClassifier(IFreqaiModel):
         X_test = data_dictionary["train_features"]
         y_test = data_dictionary["train_labels"]
 
-        """# Filter features using tuneta
-        if self.freqai_info["feature_parameters"].get("tuneta_params", False):
-            tuneta_params = self.freqai_info["feature_parameters"].get("tuneta_params")
-            tt = TuneTA(n_jobs=4, verbose=True)
-            feature_names = tt.prune_df(X_train, y_train, **tuneta_params)
-            X_train = X_train[feature_names]
-            X_test = X_test[feature_names]"""
-
         # Address class imbalance
         if self.freqai_info['feature_parameters'].get('use_smote', False):
             smote = SMOTE()
@@ -141,25 +134,33 @@ class LitmusSingleTargetClassifier(IFreqaiModel):
         )
 
         # Feature selection logic
-        num_features_select = self.freqai_info['feature_parameters'].get('num_features_select', 0)
-        if num_features_select > 0:
+        if self.freqai_info['feature_parameters'].get("use_feature_selection_routine", False):
+            # Get config params for feature selection
+            feature_selection_params = self.freqai_info['feature_parameters'].get(
+                "feature_selection_params", 0)
+
+            # Run feature selection
             all_feature_names = np.arange(len(X_train.columns))
             summary = model.select_features(
-                X=train_data, eval_set=eval_data, num_features_to_select=num_features_select,
-                features_for_select=all_feature_names, steps=2,
+                X=train_data, eval_set=eval_data,
+                num_features_to_select=feature_selection_params["num_features_select"],
+                features_for_select=all_feature_names, steps=feature_selection_params["steps"],
                 algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
                 shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=True)
 
-            # Feature importance: All features selected and eliminated
+            # Selected Features
             selected = pd.DataFrame(summary["selected_features_names"], columns=["feature_name"])
             selected["selected"] = True
+            # Eliminated Features
             eliminated = pd.DataFrame(
                 summary["eliminated_features_names"], columns=["feature_name"])
             eliminated["selected"] = False
+            # Save to Database
             feature_df = pd.concat([selected, eliminated], ignore_index=True)
             feature_df["pair"] = dk.pair
             feature_df["train_time"] = time.time()
-            print(selected)
+            feature_df.set_index(keys=["train_time", "pair", "feature_name"], inplace=True)
+            # db_helpers.save_feature_importance(df=feature_df, table_name="feature_importance")
 
         else:
             model.fit(X=train_data, eval_set=eval_data)

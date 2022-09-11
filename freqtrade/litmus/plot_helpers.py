@@ -1,8 +1,8 @@
 # mypy: ignore-errors
 # Functions to plot things
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import LabelBinarizer
 from sklearn.metrics import precision_recall_curve
+from sklearn.preprocessing import LabelBinarizer
 
 
 def plot_precision_recall_curve(estimator, y_train, X_test, y_test, file_name):

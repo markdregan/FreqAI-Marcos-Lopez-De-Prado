@@ -8,7 +8,7 @@ import time
 from catboost import CatBoostClassifier, EShapCalcType, EFeaturesSelectionAlgorithm, Pool, EFstrType
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
-from user_data.litmus import model_helpers, db_helpers
+from freqtrade.litmus import model_helpers, db_helpers
 from imblearn.over_sampling import SMOTE
 from pandas import DataFrame
 from sklearn.metrics import roc_auc_score, precision_recall_curve, recall_score, f1_score

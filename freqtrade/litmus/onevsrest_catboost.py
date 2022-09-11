@@ -1,11 +1,11 @@
-from joblib import Parallel
-from sklearn.base import clone
-from sklearn.multiclass import _ConstantPredictor, OneVsRestClassifier
-from sklearn.preprocessing import LabelBinarizer
-from sklearn.utils.fixes import delayed
+import warnings
 
 import numpy as np
-import warnings
+from joblib import Parallel
+from sklearn.base import clone
+from sklearn.multiclass import OneVsRestClassifier, _ConstantPredictor
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.utils.fixes import delayed
 
 
 # Class and functions to address OVR limitations

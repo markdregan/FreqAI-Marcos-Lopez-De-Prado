@@ -27,14 +27,7 @@
             "rateLimit": 200
         },
         "pair_whitelist": [
-	        "1INCH/USDT",
-            "AAVE/USDT",
-            "ADA/USDT",
-            "SOL/USDT",
-            "ALGO/USDT",
-            "DOGE/USDT",
-            "DYDX/USDT",
-            "ENJ/USDT"
+	        "1INCH/USDT"
         ],
         "pair_blacklist": []
     },
@@ -70,7 +63,6 @@
     ],
     "freqai": {
         "enabled": true,
-        "startup_candles": 16000,
         "purge_old_models": true,
         "train_period_days": 30,
         "backtest_period_days": 2,
@@ -87,19 +79,23 @@
             "include_corr_pairlist": [
                 "BTC/USDT"
             ],
-            "label_period_candles": 50,
+            "label_period_candles": 6,
             "include_shifted_candles": 2,
             "DI_threshold": 1.9,
             "weight_factor": 0.7,
             "principal_component_analysis": false,
             "use_SVM_to_remove_outliers": true,
-            "svm_params": {"shuffle": false, "nu": 0.1},
+            "svm_params": {"shuffle": false, "nu": 0.05},
             "stratify_training_data": 0,
             "indicator_max_period_candles": 300,
             "indicator_periods_candles": [10, 20, 50, 100],
             "noise_standard_deviation": 0.06,
             "reverse_train_test_order": false,
-            "num_features_select": 300,
+            "use_feature_selection_routine": true,
+            "feature_selection_params": {
+                "num_features_select": 300,
+                "steps": 2
+            },
             "use_smote": false
         },
         "data_split_parameters": {
@@ -108,7 +104,9 @@
         },
         "labeling_parameters": {
             "min_growth_long": 0.006,
-            "min_retraction_long": -0.003
+            "min_retraction_long": -0.003,
+            "tbm_upper": 0.006,
+            "tbm_lower": 0.006
         },
         "model_training_parameters": {
             "n_estimators": 1000, "loss_function": "MultiClass",
