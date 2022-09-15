@@ -1,7 +1,7 @@
 {
     "trading_mode": "futures",
     "margin_mode": "isolated",
-    "max_open_trades": 10,
+    "max_open_trades": 6,
     "stake_currency": "USDT",
     "stake_amount": "unlimited",
     "tradable_balance_ratio": 1,
@@ -68,8 +68,7 @@
         "backtest_period_days": 2,
         "live_retrain_hours": 0.1,
         "fit_live_predictions_candles": 200,
-        "identifier": "LitmusMinMaxClassifier",
-        "live_trained_timestamp": 0,
+        "identifier": "LitmusMinMaxThrustClassifier",
         "feature_parameters": {
             "include_timeframes": [
                 "3m",
@@ -79,15 +78,17 @@
             "include_corr_pairlist": [
                 "BTC/USDT"
             ],
-            "label_period_candles": 6,
-            "include_shifted_candles": 2,
+            "label_period_candles": 8,
+            "include_shifted_candles": 4,
             "DI_threshold": 1.9,
             "weight_factor": 0.7,
             "principal_component_analysis": false,
             "use_SVM_to_remove_outliers": true,
             "svm_params": {"shuffle": false, "nu": 0.05},
+            "inlier_metric_window": 10,
+            "inlier_metric_weibull_cutoff": 1,
             "stratify_training_data": 0,
-            "indicator_max_period_candles": 300,
+            "indicator_max_period_candles": 200,
             "indicator_periods_candles": [10, 20, 50, 100],
             "noise_standard_deviation": 0.06,
             "reverse_train_test_order": false,
@@ -104,9 +105,10 @@
         },
         "labeling_parameters": {
             "min_growth_long": 0.006,
-            "min_retraction_long": -0.003,
-            "tbm_upper": 0.006,
-            "tbm_lower": 0.006
+            "min_retraction_long": 0.003,
+            "tbm_upper": 0.01,
+            "tbm_lower": 0.01,
+            "tbm_vertical": 20
         },
         "model_training_parameters": {
             "n_estimators": 1000, "loss_function": "MultiClass",
@@ -123,7 +125,11 @@
             "max_f1_threshold_long_exit": 0,
             "max_f1_threshold_missed_long_entry": 0,
             "max_f1_threshold_missed_long_exit": 0,
-            "max_f1_threshold_not_minmax": 0
+            "max_f1_threshold_not_minmax": 0,
+            "%-long_entry_pred": 0,
+            "%-long_exit_pred": 0,
+            "%-missed_long_entry_pred": 0,
+            "%-missed_long_exit_pred": 0
         }
     },
     "telegram": {

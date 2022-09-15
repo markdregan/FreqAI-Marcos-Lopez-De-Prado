@@ -5,7 +5,7 @@ import numpy.typing as npt
 import pandas as pd
 import time
 
-from catboost import CatBoostClassifier, Pool, EFeaturesSelectionAlgorithm, EShapCalcType
+from catboost import CatBoostClassifier, Pool, EFeaturesSelectionAlgorithm, EShapCalcType, EFstrType
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
 from freqtrade.litmus.model_helpers import MergedModel
@@ -21,9 +21,8 @@ logger = logging.getLogger(__name__)
 
 class LitmusMultiTargetClassifier(IFreqaiModel):
     """
-    Base class for regression type models (e.g. Catboost, LightGBM, XGboost etc.).
-    User *must* inherit from this class and set fit() and predict(). See example scripts
-    such as prediction_models/CatboostPredictionModel.py for guidance.
+    Model that supports multiple classifiers trained separately with
+    different features and model weights.
     """
 
     def train(
@@ -66,8 +65,8 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
         )
         logger.info(f'Training model on {len(data_dictionary["train_features"])} data points')
 
-        # Pass back mask df with index for subsampling (added my markdregan)
-        dk.data_dictionary["tbm_mask"] = unfiltered_dataframe["tbm_mask"]
+        """# Pass back mask df with index for subsampling (added my markdregan)
+        dk.data_dictionary["tbm_mask"] = unfiltered_dataframe["tbm_mask"]"""
 
         model = self.fit(data_dictionary, dk)
 
@@ -124,7 +123,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             X_test = data_dictionary["train_features"]
             y_test = data_dictionary["train_labels"][t]
 
-            if t == "&tripple_barrier":
+            """if t == "&tripple_barrier":
                 # Sub-sample (remove rows) using `tbm_mask`
                 logger.info(f"Before subsampling, X_train size: {X_train.shape}")
                 tbm_mask = dk.data_dictionary["tbm_mask"]
@@ -133,7 +132,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 X_train = X_train.loc[np.isin(X_train.index, tbm_mask_idx)]
                 y_test = y_test.loc[np.isin(y_test.index, tbm_mask_idx)]
                 X_test = X_test.loc[np.isin(X_test.index, tbm_mask_idx)]
-                logger.info(f"After subsampling, X_train size: {X_train.shape}")
+                logger.info(f"After subsampling, X_train size: {X_train.shape}")"""
 
             # Address class imbalance
             if self.freqai_info['feature_parameters'].get('use_smote', False):
@@ -176,11 +175,22 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 feature_df = pd.concat([selected, eliminated], ignore_index=True)
                 feature_df["pair"] = dk.pair
                 feature_df["train_time"] = time.time()
-                feature_df.set_index(keys=["train_time", "pair", "feature_name"], inplace=True)
+                feature_df["model"] = t
+                feature_df.set_index(
+                    keys=["model", "train_time", "pair", "feature_name"], inplace=True)
                 save_df_to_db(df=feature_df, table_name="feature_selection_history")
 
             else:
                 model.fit(X=train_data, eval_set=eval_data)
+
+            # Compute feature importance & save
+            feature_imp = model.get_feature_importance(
+                data=eval_data, type=EFstrType.LossFunctionChange, prettified=True)
+            feature_imp["pair"] = dk.pair
+            feature_imp["train_time"] = time.time()
+            feature_imp["model"] = t
+            feature_imp.set_index(keys=["model", "train_time", "pair", "Feature Id"], inplace=True)
+            save_df_to_db(df=feature_imp, table_name="feature_importance_history")
 
             # Model performance metrics
             encoder = LabelBinarizer()
@@ -229,12 +239,10 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
         dk.data_dictionary["train_features"] = dk.data_dictionary["train_features"].loc[tbm_mask]
         dk.data_dictionary["train_labels"] = dk.data_dictionary["train_labels"].loc[tbm_mask]
         dk.data_dictionary["train_weights"] = dk.data_dictionary["train_weights"].loc[tbm_mask]
-        dk.data_dictionary["train_dates"] = dk.data_dictionary["train_weights"].loc[tbm_mask]
 
         # Filter rows from test data
         tbm_mask = dk.data_dictionary["test_features"]["tbm_mask"]
         dk.data_dictionary["test_features"] = dk.data_dictionary["test_features"].loc[tbm_mask]
         dk.data_dictionary["test_labels"] = dk.data_dictionary["test_labels"].loc[tbm_mask]
         dk.data_dictionary["test_weights"] = dk.data_dictionary["test_weights"].loc[tbm_mask]
-        dk.data_dictionary["test_dates"] = dk.data_dictionary["test_weights"].loc[tbm_mask]
         """

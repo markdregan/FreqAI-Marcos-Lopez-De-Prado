@@ -1,5 +1,4 @@
 from freqtrade.strategy import IStrategy, merge_informative_pair
-from freqtrade.litmus.label_helpers import tripple_barrier
 from functools import reduce
 from pandas import DataFrame
 from technical import qtpylib
@@ -41,11 +40,16 @@ class LitmusMinMaxThrustClassificationStrategy(IStrategy):
             "Thrust": {
                 "upper_barrier": {"color": "Green"},
                 "lower_barrier": {"color": "Red"},
-                "vertical_barrier": {"color": "Purple"}
+                "long_thrust_ok": {"color": "DarkGray"}
+            },
+            "Thrust NS": {
+                "upper_barrier_ns": {"color": "Green"},
+                "lower_barrier_ns": {"color": "Red"},
+                "long_thrust_ok_ns": {"color": "DarkGray"}
             },
             "Labels": {
                 "real_long_peaks": {"color": "Blue"},
-                "tripple_barrier_int": {"color": "DarkGray"}
+                "tripple_barrier_int": {"color": "Orange"}
             },
             "F1": {
                 "max_f1_long_entry": {"color": "PaleGreen"},
@@ -99,6 +103,10 @@ class LitmusMinMaxThrustClassificationStrategy(IStrategy):
         :param tf: timeframe of the dataframe which will modify the feature names
         :param informative: the dataframe associated with the informative pair
         """
+        """try:
+            print(df["%-long_entry_pred"].columns)
+        except:
+            pass"""
 
         coin = pair.split('/')[0]
 
@@ -173,7 +181,7 @@ class LitmusMinMaxThrustClassificationStrategy(IStrategy):
             min_retraction_long = self.freqai_info["labeling_parameters"].get(
                 "min_retraction_long", -1)
             long_peaks = zigzag.peak_valley_pivots(
-                df["close"].values, min_growth_long, min_retraction_long)
+                df["close"].values, min_growth_long, -min_retraction_long)
             name_map = {0: "not_minmax", 1: "long_exit", -1: "long_entry",
                         2: "missed_long_exit", -2: "missed_long_entry"}
             long_peaks[0] = 0  # Set first value of peaks = 0
@@ -186,22 +194,23 @@ class LitmusMinMaxThrustClassificationStrategy(IStrategy):
             df.loc[(df["&long_target"].shift(1) == name_map[1]), "&long_target"] = name_map[2]
             df.loc[(df["&long_target"].shift(1) == name_map[-1]), "&long_target"] = name_map[-2]
 
-            # Tripple barrier labels focusing on max/min thrust
-            window = self.freqai_info["labeling_parameters"].get("label_period_candles", 10)
+            """# Tripple barrier labels focusing on max/min thrust
             tbm_upper = self.freqai_info["labeling_parameters"].get("tbm_upper", 0.1)
-            tbm_lower = self.freqai_info["labeling_parameters"].get("tbm_upper", 0.1)
+            tbm_lower = self.freqai_info["labeling_parameters"].get("tbm_lower", 0.1)
+            tbm_vertical = self.freqai_info["labeling_parameters"].get("tbm_vertical", 10)
+
             params = {"upper_pct": tbm_upper, "lower_pct": tbm_lower}
             df["tripple_barrier_int"] = (
                 df["close"]
-                .shift(-window)
-                .rolling(window + 1)
+                .shift(-tbm_vertical)
+                .rolling(tbm_vertical + 1)
                 .apply(tripple_barrier, kwargs=params)
             )
             name_map = {0: "vertical_barrier", 1: "upper_barrier", -1: "lower_barrier"}
-            df["&tripple_barrier"] = df["tripple_barrier_int"].map(name_map)
+            df["tripple_barrier"] = df["tripple_barrier_int"].map(name_map)
 
             # Add flag to tripple_barrier so we can subsample later
-            df["tbm_mask"] = df["real_long_peaks"].isin([-2, -1, 1, 2])
+            df["tbm_mask"] = df["real_long_peaks"].isin([-2, -1, 1, 2])"""
 
         return df
 
@@ -219,24 +228,25 @@ class LitmusMinMaxThrustClassificationStrategy(IStrategy):
             dataframe["long_entry_mean"] + dataframe["long_entry_std"] * enter_mul)
         dataframe["missed_long_entry_target"] = (
             dataframe["missed_long_entry_mean"] + dataframe["missed_long_entry_std"] * enter_mul)
+
         # Long exit targets
         dataframe["long_exit_target"] = (
             dataframe["long_exit_mean"] + dataframe["long_exit_std"] * exit_mul)
         dataframe["missed_long_exit_target"] = (
             dataframe["missed_long_exit_mean"] + dataframe["missed_long_exit_std"] * exit_mul)
 
+        # Add prior model predictions as features
+        dataframe["%-long_exit_pred"] = dataframe["long_exit"]
+        dataframe["%-long_entry_pred"] = dataframe["long_entry"]
+        dataframe["%-missed_long_exit_pred"] = dataframe["missed_long_exit"]
+        dataframe["%-missed_long_entry_pred"] = dataframe["missed_long_entry"]
+
+        # Add prior model diagnostics as features
+        # TODO
+
         return dataframe
 
     def populate_entry_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
-
-        # Long Entry
-        conditions = [
-            1 == 1,
-            qtpylib.crossed_above(df["long_entry"], df["long_entry_target"])]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
-            ] = (1, "long_entry")
 
         # Missed Long Entry
         conditions = [
@@ -265,116 +275,14 @@ class LitmusMinMaxThrustClassificationStrategy(IStrategy):
     def get_ticker_indicator(self):
         return int(self.config["timeframe"][:-1])
 
-    """def custom_exit(
-        self, pair: str, trade: Trade, current_time, current_rate, current_profit, **kwargs
-    ):
+    """def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
+                            proposed_stake: float, min_stake: float, max_stake: float,
+                            leverage: float, entry_tag: str, side: str,
+                            **kwargs) -> float:
+
         dataframe, _ = self.dp.get_analyzed_dataframe(pair=pair, timeframe=self.timeframe)
-        trade_date = timeframe_to_prev_date(self.config["timeframe"], trade.open_date_utc)
-        trade_candle = dataframe.loc[(dataframe["date"] == trade_date)]
-        if trade_candle.empty:
-            return None
-        trade_candle = trade_candle.squeeze()
-        follow_mode = self.config.get("freqai", {}).get("follow_mode", False)
-        if not follow_mode:
-            pair_dict = self.freqai.dd.pair_dict
-        else:
-            pair_dict = self.freqai.dd.follower_dict
-        entry_tag = trade.enter_tag
-        if (
-            "prediction" + entry_tag not in pair_dict[pair]
-            or pair_dict[pair]["prediction" + entry_tag] > 0
-        ):
-            with self.freqai.lock:
-                pair_dict[pair]["prediction" + entry_tag] = abs(trade_candle["&-s_close"])
-                if not follow_mode:
-                    self.freqai.dd.save_drawer_to_disk()
-                else:
-                    self.freqai.dd.save_follower_dict_to_disk()
-        roi_price = pair_dict[pair]["prediction" + entry_tag]
-        roi_time = self.max_roi_time_long.value
-        roi_decay = roi_price * (
-            1 - ((current_time - trade.open_date_utc).seconds) / (roi_time * 60)
-        )
-        if roi_decay < 0:
-            roi_decay = self.linear_roi_offset.value
-        else:
-            roi_decay += self.linear_roi_offset.value
-        if current_profit > roi_decay:
-            return "roi_custom_win"
-        if current_profit < -roi_decay:
-            return "roi_custom_loss"
-            """
+        current_candle = dataframe.iloc[-1].squeeze()
 
-    """def confirm_trade_exit(
-        self,
-        pair: str,
-        trade: Trade,
-        order_type: str,
-        amount: float,
-        rate: float,
-        time_in_force: str,
-        exit_reason: str,
-        current_time,
-        **kwargs,
-    ) -> bool:
+        bid = self.wallets.get_available_stake_amount() * current_candle["missed_long_entry"]
 
-        entry_tag = trade.enter_tag
-        follow_mode = self.config.get("freqai", {}).get("follow_mode", False)
-        if not follow_mode:
-            pair_dict = self.freqai.dd.pair_dict
-        else:
-            pair_dict = self.freqai.dd.follower_dict
-
-        with self.freqai.lock:
-            pair_dict[pair]["prediction" + entry_tag] = 0
-            if not follow_mode:
-                self.freqai.dd.save_drawer_to_disk()
-            else:
-                self.freqai.dd.save_follower_dict_to_disk()
-
-        return True"""
-
-    def confirm_trade_entry(
-        self,
-        pair: str,
-        order_type: str,
-        amount: float,
-        rate: float,
-        time_in_force: str,
-        current_time,
-        entry_tag,
-        side: str,
-        **kwargs,
-    ) -> bool:
-
-        """# Ensure excessive slippage is avoided
-        df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        last_candle = df.iloc[-1].squeeze()
-
-        if side == "long":
-            if rate > (last_candle["close"] * (1 + 0.0025)):
-                logger.info("Long trade blocked due to excessive slippage")
-                return False
-        else:
-            if rate < (last_candle["close"] * (1 - 0.0025)):
-                logger.info("Short trade blocked due to excessive slippage")
-                return False"""
-
-        """# Balance the number of long vs short positions
-        open_trades = Trade.get_trades(trade_filter=Trade.is_open.is_(True))
-        num_shorts, num_longs = 0, 0
-        for trade in open_trades:
-            if trade.enter_tag == 'short':
-                num_shorts += 1
-            elif trade.enter_tag == 'long':
-                num_longs += 1
-
-        max_long_short_trades = int(self.config["max_open_trades"] / 2)
-        if side == "long" and num_longs >= max_long_short_trades:
-            logger.info("Long trade blocked due to long/short imbalance")
-            return False
-        elif side == "short" and num_shorts >= max_long_short_trades:
-            logger.info("Short trade blocked due to long/short imbalance")
-            return False"""
-
-        return True
+        return bid"""
