@@ -1,7 +1,8 @@
 import copy
-import datetime
 import logging
 import shutil
+from datetime import datetime, timezone
+from math import cos, sin
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -9,6 +10,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from pandas import DataFrame
+from scipy import stats
 from sklearn import linear_model
 from sklearn.cluster import DBSCAN
 from sklearn.metrics.pairwise import pairwise_distances
@@ -16,8 +18,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.neighbors import NearestNeighbors
 
 from freqtrade.configuration import TimeRange
-from freqtrade.data.dataprovider import DataProvider
-from freqtrade.data.history.history_utils import refresh_backtest_ohlcv_data
 from freqtrade.exceptions import OperationalException
 from freqtrade.exchange import timeframe_to_seconds
 from freqtrade.strategy.interface import IStrategy
@@ -71,6 +71,8 @@ class FreqaiDataKitchen:
         self.label_list: List = []
         self.training_features_list: List = []
         self.model_filename: str = ""
+        self.backtesting_results_path = Path()
+        self.backtest_predictions_folder: str = "backtesting_predictions"
         self.live = live
         self.pair = pair
 
@@ -182,7 +184,7 @@ class FreqaiDataKitchen:
 
     def filter_features(
         self,
-        unfiltered_dataframe: DataFrame,
+        unfiltered_df: DataFrame,
         training_feature_list: List,
         label_list: List = list(),
         training_filter: bool = True,
@@ -193,31 +195,35 @@ class FreqaiDataKitchen:
         0s in the prediction dataset. However, prediction dataset do_predict will reflect any
         row that had a NaN and will shield user from that prediction.
         :params:
-        :unfiltered_dataframe: the full dataframe for the present training period
+        :unfiltered_df: the full dataframe for the present training period
         :training_feature_list: list, the training feature list constructed by
         self.build_feature_list() according to user specified parameters in the configuration file.
         :labels: the labels for the dataset
         :training_filter: boolean which lets the function know if it is training data or
         prediction data to be filtered.
         :returns:
-        :filtered_dataframe: dataframe cleaned of NaNs and only containing the user
+        :filtered_df: dataframe cleaned of NaNs and only containing the user
         requested feature set.
         :labels: labels cleaned of NaNs.
         """
-        filtered_dataframe = unfiltered_dataframe.filter(training_feature_list, axis=1)
-        filtered_dataframe = filtered_dataframe.replace([np.inf, -np.inf], np.nan)
+        filtered_df = unfiltered_df.filter(training_feature_list, axis=1)
+        filtered_df = filtered_df.replace([np.inf, -np.inf], np.nan)
 
-        drop_index = pd.isnull(filtered_dataframe).any(1)  # get the rows that have NaNs,
+        drop_index = pd.isnull(filtered_df).any(1)  # get the rows that have NaNs,
         drop_index = drop_index.replace(True, 1).replace(False, 0)  # pep8 requirement.
         if (training_filter):
+            const_cols = list((filtered_df.nunique() == 1).loc[lambda x: x].index)
+            if const_cols:
+                filtered_df = filtered_df.filter(filtered_df.columns.difference(const_cols))
+                logger.warning(f"Removed features {const_cols} with constant values.")
             # we don't care about total row number (total no. datapoints) in training, we only care
             # about removing any row with NaNs
             # if labels has multiple columns (user wants to train multiple modelEs), we detect here
-            labels = unfiltered_dataframe.filter(label_list, axis=1)
+            labels = unfiltered_df.filter(label_list, axis=1)
             drop_index_labels = pd.isnull(labels).any(1)
             drop_index_labels = drop_index_labels.replace(True, 1).replace(False, 0)
-            dates = unfiltered_dataframe['date']
-            filtered_dataframe = filtered_dataframe[
+            dates = unfiltered_df['date']
+            filtered_df = filtered_df[
                 (drop_index == 0) & (drop_index_labels == 0)
             ]  # dropping values
             labels = labels[
@@ -227,13 +233,13 @@ class FreqaiDataKitchen:
                 (drop_index == 0) & (drop_index_labels == 0)
             ]
             logger.info(
-                f"dropped {len(unfiltered_dataframe) - len(filtered_dataframe)} training points"
-                f" due to NaNs in populated dataset {len(unfiltered_dataframe)}."
+                f"dropped {len(unfiltered_df) - len(filtered_df)} training points"
+                f" due to NaNs in populated dataset {len(unfiltered_df)}."
             )
-            if (1 - len(filtered_dataframe) / len(unfiltered_dataframe)) > 0.1 and self.live:
-                worst_indicator = str(unfiltered_dataframe.count().idxmin())
+            if (1 - len(filtered_df) / len(unfiltered_df)) > 0.1 and self.live:
+                worst_indicator = str(unfiltered_df.count().idxmin())
                 logger.warning(
-                    f" {(1 - len(filtered_dataframe)/len(unfiltered_dataframe)) * 100:.0f} percent "
+                    f" {(1 - len(filtered_df)/len(unfiltered_df)) * 100:.0f} percent "
                     " of training data dropped due to NaNs, model may perform inconsistent "
                     f"with expectations. Verify {worst_indicator}"
                 )
@@ -242,9 +248,9 @@ class FreqaiDataKitchen:
         else:
             # we are backtesting so we need to preserve row number to send back to strategy,
             # so now we use do_predict to avoid any prediction based on a NaN
-            drop_index = pd.isnull(filtered_dataframe).any(1)
+            drop_index = pd.isnull(filtered_df).any(1)
             self.data["filter_drop_index_prediction"] = drop_index
-            filtered_dataframe.fillna(0, inplace=True)
+            filtered_df.fillna(0, inplace=True)
             # replacing all NaNs with zeros to avoid issues in 'prediction', but any prediction
             # that was based on a single NaN is ultimately protected from buys with do_predict
             drop_index = ~drop_index
@@ -253,11 +259,11 @@ class FreqaiDataKitchen:
                 logger.info(
                     "dropped %s of %s prediction data points due to NaNs.",
                     len(self.do_predict) - self.do_predict.sum(),
-                    len(filtered_dataframe),
+                    len(filtered_df),
                 )
             labels = []
 
-        return filtered_dataframe, labels
+        return filtered_df, labels
 
     def build_data_dictionary(
         self,
@@ -289,6 +295,7 @@ class FreqaiDataKitchen:
         :returns:
         :data_dictionary: updated dictionary with standardized values.
         """
+
         # standardize the data by training stats
         train_max = data_dictionary["train_features"].max()
         train_min = data_dictionary["train_features"].min()
@@ -322,9 +329,23 @@ class FreqaiDataKitchen:
                     - 1
                 )
 
-            self.data[f"{item}_max"] = train_labels_max  # .to_dict()
-            self.data[f"{item}_min"] = train_labels_min  # .to_dict()
+            self.data[f"{item}_max"] = train_labels_max
+            self.data[f"{item}_min"] = train_labels_min
         return data_dictionary
+
+    def normalize_single_dataframe(self, df: DataFrame) -> DataFrame:
+
+        train_max = df.max()
+        train_min = df.min()
+        df = (
+            2 * (df - train_min) / (train_max - train_min) - 1
+        )
+
+        for item in train_max.keys():
+            self.data[item + "_max"] = train_max[item]
+            self.data[item + "_min"] = train_min[item]
+
+        return df
 
     def normalize_data_from_metadata(self, df: DataFrame) -> DataFrame:
         """
@@ -345,7 +366,7 @@ class FreqaiDataKitchen:
 
     def denormalize_labels_from_metadata(self, df: DataFrame) -> DataFrame:
         """
-        Normalize a set of data using the mean and standard deviation from
+        Denormalize a set of data using the mean and standard deviation from
         the associated training data.
         :param df: Dataframe of predictions to be denormalized
         """
@@ -384,7 +405,7 @@ class FreqaiDataKitchen:
         config_timerange = TimeRange.parse_timerange(self.config["timerange"])
         if config_timerange.stopts == 0:
             config_timerange.stopts = int(
-                datetime.datetime.now(tz=datetime.timezone.utc).timestamp()
+                datetime.now(tz=timezone.utc).timestamp()
             )
         timerange_train = copy.deepcopy(full_timerange)
         timerange_backtest = copy.deepcopy(full_timerange)
@@ -401,8 +422,8 @@ class FreqaiDataKitchen:
             timerange_train.stopts = timerange_train.startts + train_period_days
 
             first = False
-            start = datetime.datetime.utcfromtimestamp(timerange_train.startts)
-            stop = datetime.datetime.utcfromtimestamp(timerange_train.stopts)
+            start = datetime.fromtimestamp(timerange_train.startts, tz=timezone.utc)
+            stop = datetime.fromtimestamp(timerange_train.stopts, tz=timezone.utc)
             tr_training_list.append(start.strftime("%Y%m%d") + "-" + stop.strftime("%Y%m%d"))
             tr_training_list_timerange.append(copy.deepcopy(timerange_train))
 
@@ -415,8 +436,8 @@ class FreqaiDataKitchen:
             if timerange_backtest.stopts > config_timerange.stopts:
                 timerange_backtest.stopts = config_timerange.stopts
 
-            start = datetime.datetime.utcfromtimestamp(timerange_backtest.startts)
-            stop = datetime.datetime.utcfromtimestamp(timerange_backtest.stopts)
+            start = datetime.fromtimestamp(timerange_backtest.startts, tz=timezone.utc)
+            stop = datetime.fromtimestamp(timerange_backtest.stopts, tz=timezone.utc)
             tr_backtesting_list.append(start.strftime("%Y%m%d") + "-" + stop.strftime("%Y%m%d"))
             tr_backtesting_list_timerange.append(copy.deepcopy(timerange_backtest))
 
@@ -436,11 +457,33 @@ class FreqaiDataKitchen:
                    it is sliced down to just the present training period.
         """
 
-        start = datetime.datetime.fromtimestamp(timerange.startts, tz=datetime.timezone.utc)
-        stop = datetime.datetime.fromtimestamp(timerange.stopts, tz=datetime.timezone.utc)
+        start = datetime.fromtimestamp(timerange.startts, tz=timezone.utc)
+        stop = datetime.fromtimestamp(timerange.stopts, tz=timezone.utc)
         df = df.loc[df["date"] >= start, :]
-        df = df.loc[df["date"] <= stop, :]
+        if not self.live:
+            df = df.loc[df["date"] < stop, :]
 
+        return df
+
+    def remove_training_from_backtesting(
+        self
+    ) -> DataFrame:
+        """
+        Function which takes the backtesting time range and
+        remove training data from dataframe, keeping only the
+        startup_candle_count candles
+        """
+        startup_candle_count = self.config.get('startup_candle_count', 0)
+        tf = self.config['timeframe']
+        tr = self.config["timerange"]
+
+        backtesting_timerange = TimeRange.parse_timerange(tr)
+        if startup_candle_count > 0 and backtesting_timerange:
+            backtesting_timerange.subtract_start(timeframe_to_seconds(tf) * startup_candle_count)
+
+        start = datetime.fromtimestamp(backtesting_timerange.startts, tz=timezone.utc)
+        df = self.return_dataframe
+        df = df.loc[df["date"] >= start, :]
         return df
 
     def principal_component_analysis(self) -> None:
@@ -452,22 +495,23 @@ class FreqaiDataKitchen:
 
         from sklearn.decomposition import PCA  # avoid importing if we dont need it
 
-        n_components = self.data_dictionary["train_features"].shape[1]
-        pca = PCA(n_components=n_components)
+        pca = PCA(0.999)
         pca = pca.fit(self.data_dictionary["train_features"])
-        n_keep_components = np.argmin(pca.explained_variance_ratio_.cumsum() < 0.999)
-        pca2 = PCA(n_components=n_keep_components)
+        n_keep_components = pca.n_components_
         self.data["n_kept_components"] = n_keep_components
-        pca2 = pca2.fit(self.data_dictionary["train_features"])
+        n_components = self.data_dictionary["train_features"].shape[1]
         logger.info("reduced feature dimension by %s", n_components - n_keep_components)
-        logger.info("explained variance %f", np.sum(pca2.explained_variance_ratio_))
-        train_components = pca2.transform(self.data_dictionary["train_features"])
+        logger.info("explained variance %f", np.sum(pca.explained_variance_ratio_))
 
+        train_components = pca.transform(self.data_dictionary["train_features"])
         self.data_dictionary["train_features"] = pd.DataFrame(
             data=train_components,
             columns=["PC" + str(i) for i in range(0, n_keep_components)],
             index=self.data_dictionary["train_features"].index,
         )
+        # normalsing transformed training features
+        self.data_dictionary["train_features"] = self.normalize_single_dataframe(
+            self.data_dictionary["train_features"])
 
         # keeping a copy of the non-transformed features so we can check for errors during
         # model load from disk
@@ -475,15 +519,18 @@ class FreqaiDataKitchen:
         self.training_features_list = self.data_dictionary["train_features"].columns
 
         if self.freqai_config.get('data_split_parameters', {}).get('test_size', 0.1) != 0:
-            test_components = pca2.transform(self.data_dictionary["test_features"])
+            test_components = pca.transform(self.data_dictionary["test_features"])
             self.data_dictionary["test_features"] = pd.DataFrame(
                 data=test_components,
                 columns=["PC" + str(i) for i in range(0, n_keep_components)],
                 index=self.data_dictionary["test_features"].index,
             )
+            # normalise transformed test feature to transformed training features
+            self.data_dictionary["test_features"] = self.normalize_data_from_metadata(
+                self.data_dictionary["test_features"])
 
         self.data["n_kept_components"] = n_keep_components
-        self.pca = pca2
+        self.pca = pca
 
         logger.info(f"PCA reduced total features from  {n_components} to {n_keep_components}")
 
@@ -504,6 +551,9 @@ class FreqaiDataKitchen:
             columns=["PC" + str(i) for i in range(0, self.data["n_kept_components"])],
             index=filtered_dataframe.index,
         )
+        # normalise transformed predictions to transformed training features
+        self.data_dictionary["prediction_features"] = self.normalize_data_from_metadata(
+            self.data_dictionary["prediction_features"])
 
     def compute_distances(self) -> float:
         """
@@ -630,8 +680,6 @@ class FreqaiDataKitchen:
         is an outlier.
         """
 
-        from math import cos, sin
-
         if predict:
             if not self.data['DBSCAN_eps']:
                 return
@@ -732,10 +780,7 @@ class FreqaiDataKitchen:
         into previous timepoints.
         """
 
-        import scipy.stats as ss
-
         no_prev_pts = self.freqai_config["feature_parameters"]["inlier_metric_window"]
-        weib_pct = self.freqai_config["feature_parameters"]["inlier_metric_weibull_cutoff"]
 
         if set_ == 'train':
             compute_df = copy.deepcopy(self.data_dictionary['train_features'])
@@ -779,13 +824,11 @@ class FreqaiDataKitchen:
         inliers = pd.DataFrame(index=distances.index)
         for key in distances.keys():
             current_distances = distances[key].dropna()
-            fit_params = ss.weibull_min.fit(current_distances)
-            cutoff = ss.weibull_min.ppf(weib_pct, *fit_params)
-            is_inlier = np.where(
-                current_distances <= cutoff, 1, 0
-            )
+            fit_params = stats.weibull_min.fit(current_distances)
+            quantiles = stats.weibull_min.cdf(current_distances, *fit_params)
+
             df_inlier = pd.DataFrame(
-                {key + '_IsInlier': is_inlier}, index=distances.index
+                {key: quantiles}, index=distances.index
             )
             inliers = pd.concat(
                 [inliers, df_inlier], axis=1
@@ -797,8 +840,8 @@ class FreqaiDataKitchen:
             index=compute_df.index
         )
 
-        inlier_metric = 2 * (inlier_metric - inlier_metric.min()) / \
-            (inlier_metric.max() - inlier_metric.min()) - 1
+        inlier_metric = (2 * (inlier_metric - inlier_metric.min()) /
+                         (inlier_metric.max() - inlier_metric.min()) - 1)
 
         if set_ in ('train', 'test'):
             inlier_metric = inlier_metric.iloc[no_prev_pts:]
@@ -810,6 +853,8 @@ class FreqaiDataKitchen:
             self.data_dictionary['prediction_features'] = pd.concat(
                 [compute_df, inlier_metric], axis=1)
             self.data_dictionary['prediction_features'].fillna(0, inplace=True)
+
+        logger.info('Inlier metric computed and added to features.')
 
         return None
 
@@ -888,9 +933,10 @@ class FreqaiDataKitchen:
         weights = np.exp(-np.arange(num_weights) / (wfactor * num_weights))[::-1]
         return weights
 
-    def append_predictions(self, predictions: DataFrame, do_predict: npt.ArrayLike) -> None:
+    def get_predictions_to_append(self, predictions: DataFrame,
+                                  do_predict: npt.ArrayLike) -> DataFrame:
         """
-        Append backtest prediction from current backtest period to all previous periods
+        Get backtest prediction from current backtest period
         """
 
         append_df = DataFrame()
@@ -905,12 +951,17 @@ class FreqaiDataKitchen:
         if self.freqai_config["feature_parameters"].get("DI_threshold", 0) > 0:
             append_df["DI_values"] = self.DI_values
 
+        return append_df
+
+    def append_predictions(self, append_df: DataFrame) -> None:
+        """
+        Append backtest prediction from current backtest period to all previous periods
+        """
+
         if self.full_df.empty:
             self.full_df = append_df
         else:
             self.full_df = pd.concat([self.full_df, append_df], axis=0)
-
-        return
 
     def fill_predictions(self, dataframe):
         """
@@ -928,6 +979,7 @@ class FreqaiDataKitchen:
         to_keep = [col for col in dataframe.columns if not col.startswith("&")]
         self.return_dataframe = pd.concat([dataframe[to_keep], self.full_df], axis=1)
 
+        self.return_dataframe = self.remove_training_from_backtesting()
         self.full_df = DataFrame()
 
         return
@@ -951,14 +1003,14 @@ class FreqaiDataKitchen:
                                        "Please indicate the end date of your desired backtesting. "
                                        "timerange.")
             # backtest_timerange.stopts = int(
-            #     datetime.datetime.now(tz=datetime.timezone.utc).timestamp()
+            #     datetime.now(tz=timezone.utc).timestamp()
             # )
 
         backtest_timerange.startts = (
             backtest_timerange.startts - backtest_period_days * SECONDS_IN_DAY
         )
-        start = datetime.datetime.utcfromtimestamp(backtest_timerange.startts)
-        stop = datetime.datetime.utcfromtimestamp(backtest_timerange.stopts)
+        start = datetime.fromtimestamp(backtest_timerange.startts, tz=timezone.utc)
+        stop = datetime.fromtimestamp(backtest_timerange.stopts, tz=timezone.utc)
         full_timerange = start.strftime("%Y%m%d") + "-" + stop.strftime("%Y%m%d")
 
         self.full_path = Path(
@@ -984,7 +1036,7 @@ class FreqaiDataKitchen:
         :return:
             bool = If the model is expired or not.
         """
-        time = datetime.datetime.now(tz=datetime.timezone.utc).timestamp()
+        time = datetime.now(tz=timezone.utc).timestamp()
         elapsed_time = (time - trained_timestamp) / 3600  # hours
         max_time = self.freqai_config.get("expiration_hours", 0)
         if max_time > 0:
@@ -996,7 +1048,7 @@ class FreqaiDataKitchen:
         self, trained_timestamp: int
     ) -> Tuple[bool, TimeRange, TimeRange]:
 
-        time = datetime.datetime.now(tz=datetime.timezone.utc).timestamp()
+        time = datetime.now(tz=timezone.utc).timestamp()
         trained_timerange = TimeRange()
         data_load_timerange = TimeRange()
 
@@ -1011,9 +1063,7 @@ class FreqaiDataKitchen:
         # We notice that users like to use exotic indicators where
         # they do not know the required timeperiod. Here we include a factor
         # of safety by multiplying the user considered "max" by 2.
-        max_period = self.freqai_config["feature_parameters"].get(
-            "indicator_max_period_candles", 20
-        ) * 2
+        max_period = self.config.get('startup_candle_count', 20) * 2
         additional_seconds = max_period * max_tf_seconds
 
         if trained_timestamp != 0:
@@ -1058,31 +1108,6 @@ class FreqaiDataKitchen:
         )
 
         self.model_filename = f"cb_{coin.lower()}_{int(trained_timerange.stopts)}"
-
-    def download_all_data_for_training(self, timerange: TimeRange, dp: DataProvider) -> None:
-        """
-        Called only once upon start of bot to download the necessary data for
-        populating indicators and training the model.
-        :param timerange: TimeRange = The full data timerange for populating the indicators
-                                      and training the model.
-        :param dp: DataProvider instance attached to the strategy
-        """
-        new_pairs_days = int((timerange.stopts - timerange.startts) / SECONDS_IN_DAY)
-        if not dp._exchange:
-            # Not realistic - this is only called in live mode.
-            raise OperationalException("Dataprovider did not have an exchange attached.")
-        refresh_backtest_ohlcv_data(
-            dp._exchange,
-            pairs=self.all_pairs,
-            timeframes=self.freqai_config["feature_parameters"].get("include_timeframes"),
-            datadir=self.config["datadir"],
-            timerange=timerange,
-            new_pairs_days=new_pairs_days,
-            erase=False,
-            data_format=self.config.get("dataformat_ohlcv", "json"),
-            trading_mode=self.config.get("trading_mode", "spot"),
-            prepend=self.config.get("prepend_data", False),
-        )
 
     def set_all_pairs(self) -> None:
 
@@ -1197,3 +1222,48 @@ class FreqaiDataKitchen:
         if self.unique_classes:
             for label in self.unique_classes:
                 self.unique_class_list += list(self.unique_classes[label])
+
+    def save_backtesting_prediction(
+        self, append_df: DataFrame
+    ) -> None:
+        """
+        Save prediction dataframe from backtesting to h5 file format
+        :param append_df: dataframe for backtesting period
+        """
+        full_predictions_folder = Path(self.full_path / self.backtest_predictions_folder)
+        if not full_predictions_folder.is_dir():
+            full_predictions_folder.mkdir(parents=True, exist_ok=True)
+
+        append_df.to_hdf(self.backtesting_results_path, key='append_df', mode='w')
+
+    def get_backtesting_prediction(
+        self
+    ) -> DataFrame:
+        """
+        Get prediction dataframe from h5 file format
+        """
+        append_df = pd.read_hdf(self.backtesting_results_path)
+        return append_df
+
+    def check_if_backtest_prediction_exists(
+        self
+    ) -> bool:
+        """
+        Check if a backtesting prediction already exists
+        :param dk: FreqaiDataKitchen
+        :return:
+        :boolean: whether the prediction file exists or not.
+        """
+        path_to_predictionfile = Path(self.full_path /
+                                      self.backtest_predictions_folder /
+                                      f"{self.model_filename}_prediction.h5")
+        self.backtesting_results_path = path_to_predictionfile
+
+        file_exists = path_to_predictionfile.is_file()
+        if file_exists:
+            logger.info(f"Found backtesting prediction file at {path_to_predictionfile}")
+        else:
+            logger.info(
+                f"Could not find backtesting prediction file at {path_to_predictionfile}"
+            )
+        return file_exists
