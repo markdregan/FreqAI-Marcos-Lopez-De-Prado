@@ -123,17 +123,6 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             X_test = data_dictionary["train_features"]
             y_test = data_dictionary["train_labels"][t]
 
-            """if t == "&tripple_barrier":
-                # Sub-sample (remove rows) using `tbm_mask`
-                logger.info(f"Before subsampling, X_train size: {X_train.shape}")
-                tbm_mask = dk.data_dictionary["tbm_mask"]
-                tbm_mask_idx = tbm_mask.loc[tbm_mask].index
-                y_train = y_train.loc[np.isin(y_train.index, tbm_mask_idx)]
-                X_train = X_train.loc[np.isin(X_train.index, tbm_mask_idx)]
-                y_test = y_test.loc[np.isin(y_test.index, tbm_mask_idx)]
-                X_test = X_test.loc[np.isin(X_test.index, tbm_mask_idx)]
-                logger.info(f"After subsampling, X_train size: {X_train.shape}")"""
-
             # Address class imbalance
             if self.freqai_info['feature_parameters'].get('use_smote', False):
                 smote = SMOTE()
@@ -163,6 +152,9 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                     algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
                     shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=True)
 
+                # Loss Graph
+                print(summary["loss_graph"]["loss_values"])
+                print(np.argmin(summary["loss_graph"]["loss_values"]))
                 # Selected Features
                 selected = pd.DataFrame(summary["selected_features_names"],
                                         columns=["feature_name"])
@@ -186,10 +178,13 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             # Compute feature importance & save
             feature_imp = model.get_feature_importance(
                 data=eval_data, type=EFstrType.LossFunctionChange, prettified=True)
+            feature_imp.rename(columns={"Feature Id": "feature_id", "Importances": "importance"},
+                               inplace=True)
             feature_imp["pair"] = dk.pair
             feature_imp["train_time"] = time.time()
             feature_imp["model"] = t
-            feature_imp.set_index(keys=["model", "train_time", "pair", "Feature Id"], inplace=True)
+            feature_imp["rank"] = feature_imp["importance"].rank(method="first", ascending=False)
+            feature_imp.set_index(keys=["model", "train_time", "pair", "feature_id"], inplace=True)
             save_df_to_db(df=feature_imp, table_name="feature_importance_history")
 
             # Model performance metrics
@@ -229,20 +224,3 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
         logger.info(f"Time taken to select best features & train model: {end_time} seconds")
 
         return model
-
-    """def data_cleaning_train(self, dk: FreqaiDataKitchen) -> None:
-
-        super().data_cleaning_train(dk)
-
-        # Filter rows from training data
-        tbm_mask = dk.data_dictionary["train_features"]["tbm_mask"]
-        dk.data_dictionary["train_features"] = dk.data_dictionary["train_features"].loc[tbm_mask]
-        dk.data_dictionary["train_labels"] = dk.data_dictionary["train_labels"].loc[tbm_mask]
-        dk.data_dictionary["train_weights"] = dk.data_dictionary["train_weights"].loc[tbm_mask]
-
-        # Filter rows from test data
-        tbm_mask = dk.data_dictionary["test_features"]["tbm_mask"]
-        dk.data_dictionary["test_features"] = dk.data_dictionary["test_features"].loc[tbm_mask]
-        dk.data_dictionary["test_labels"] = dk.data_dictionary["test_labels"].loc[tbm_mask]
-        dk.data_dictionary["test_weights"] = dk.data_dictionary["test_weights"].loc[tbm_mask]
-        """
