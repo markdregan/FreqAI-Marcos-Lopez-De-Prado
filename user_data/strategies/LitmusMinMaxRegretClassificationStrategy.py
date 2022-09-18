@@ -11,11 +11,11 @@ import zigzag
 logger = logging.getLogger(__name__)
 
 
-class LitmusMinMaxThrustClassificationStrategy(IStrategy):
+class LitmusMinMaxRegretClassificationStrategy(IStrategy):
     """
     to run this:
       freqtrade trade --strategy LitmusMinMaxThrustClassificationStrategy
-      --config user_data/strategies/config.LitmusMinMaxThrustClassification.json
+      --config user_data/strategies/config.LitmusMinMaxClassification.json
       --freqaimodel LitmusMultiTargetClassifier --verbose
     """
 
@@ -36,16 +36,6 @@ class LitmusMinMaxThrustClassificationStrategy(IStrategy):
                 "long_exit": {"color": "Salmon"},
                 "missed_long_exit": {"color": "Crimson "},
                 "missed_long_exit_target": {"color": "Crimson "},
-            },
-            "Thrust": {
-                "upper_barrier": {"color": "Green"},
-                "lower_barrier": {"color": "Red"},
-                "long_thrust_ok": {"color": "DarkGray"}
-            },
-            "Thrust NS": {
-                "upper_barrier_ns": {"color": "Green"},
-                "lower_barrier_ns": {"color": "Red"},
-                "long_thrust_ok_ns": {"color": "DarkGray"}
             },
             "Labels": {
                 "real_long_peaks": {"color": "Blue"},
@@ -234,12 +224,6 @@ class LitmusMinMaxThrustClassificationStrategy(IStrategy):
             dataframe["long_exit_mean"] + dataframe["long_exit_std"] * exit_mul)
         dataframe["missed_long_exit_target"] = (
             dataframe["missed_long_exit_mean"] + dataframe["missed_long_exit_std"] * exit_mul)
-
-        # Add prior model predictions as features
-        dataframe["%-long_exit_pred"] = dataframe["long_exit"]
-        dataframe["%-long_entry_pred"] = dataframe["long_entry"]
-        dataframe["%-missed_long_exit_pred"] = dataframe["missed_long_exit"]
-        dataframe["%-missed_long_entry_pred"] = dataframe["missed_long_entry"]
 
         # Add prior model diagnostics as features
         # TODO

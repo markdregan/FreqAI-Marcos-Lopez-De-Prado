@@ -1,7 +1,7 @@
 {
     "trading_mode": "futures",
     "margin_mode": "isolated",
-    "max_open_trades": 6,
+    "max_open_trades": 10,
     "stake_currency": "USDT",
     "stake_amount": "unlimited",
     "tradable_balance_ratio": 1,
@@ -28,7 +28,15 @@
         },
         "pair_whitelist": [
 	        "1INCH/USDT",
-            "SOL/USDT"
+            "AAVE/USDT",
+            "ADA/USDT",
+            "SOL/USDT",
+            "ALGO/USDT",
+            "DOGE/USDT",
+            "DYDX/USDT",
+            "ENJ/USDT",
+            "ETC/USDT",
+            "IOTA/USDT"
         ],
         "pair_blacklist": []
     },
@@ -67,8 +75,7 @@
         "purge_old_models": true,
         "train_period_days": 30,
         "backtest_period_days": 0.1,
-        "live_retrain_hours": 0.1,
-        "fit_live_predictions_candles": 200,
+        "fit_live_predictions_candles": 250,
         "identifier": "LitmusMinMaxThrustClassifier",
         "feature_parameters": {
             "include_timeframes": [
@@ -85,8 +92,10 @@
             "weight_factor": 0.7,
             "principal_component_analysis": false,
             "use_SVM_to_remove_outliers": true,
-            "svm_params": {"shuffle": false, "nu": 0.05},
-            "inlier_metric_window": 10,
+            "svm_params": {
+                "shuffle": false,
+                "nu": 0.05},
+            "inlier_metric_window": 20,
             "stratify_training_data": 0,
             "indicator_max_period_candles": 200,
             "indicator_periods_candles": [10, 20, 50, 100],
@@ -94,8 +103,13 @@
             "reverse_train_test_order": false,
             "use_feature_selection_routine": true,
             "feature_selection_params": {
-                "num_features_select": 200,
+                "num_features_select": 300,
                 "steps": 2
+            },
+            "use_featurewiz": false,
+            "featurewiz_params": {
+                "corr_limit": 0.97,
+                "feature_engg": ""
             },
             "use_smote": false
         },
@@ -105,7 +119,7 @@
         },
         "labeling_parameters": {
             "min_growth_long": 0.01,
-            "min_retraction_long": 0.005
+            "min_retraction_long": 0.01
         },
         "model_training_parameters": {
             "n_estimators": 1000, "loss_function": "MultiClass",
@@ -123,19 +137,12 @@
             "max_f1_threshold_missed_long_entry": 0,
             "max_f1_threshold_missed_long_exit": 0,
             "max_f1_threshold_not_minmax": 0,
-            "%-long_entry_pred": 0,
-            "%-long_exit_pred": 0,
-            "%-missed_long_entry_pred": 0,
-            "%-missed_long_exit_pred": 0
         }
     },
     "telegram": {
-        "enabled": false,
+        "enabled": true,
         "token": "5012333300:AAFiwgqakXFwAsDBLqgXDLTnWqQCMBsYbK4",
-        "chat_id": "-729673394",
-        "chat": {
-            "id": -729673394
-        }
+        "chat_id": "1963068189"
     },
     "api_server": {
         "enabled": true,

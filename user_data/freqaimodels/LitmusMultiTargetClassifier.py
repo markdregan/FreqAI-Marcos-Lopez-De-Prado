@@ -6,6 +6,7 @@ import pandas as pd
 import time
 
 from catboost import CatBoostClassifier, Pool, EFeaturesSelectionAlgorithm, EShapCalcType, EFstrType
+from featurewiz import FeatureWiz
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
 from freqtrade.litmus.model_helpers import MergedModel
@@ -136,6 +137,25 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 allow_writing_files=False,
                 **self.model_training_parameters
             )
+
+            # Featurewiz feature selection
+            if self.freqai_info["feature_parameters"].get("use_featurewiz", False):
+                corr_limit = self.freqai_info["feature_parameters"]["featurewiz_params"].get(
+                    "corr_limit", 0.9
+                )
+                feature_engg = self.freqai_info["feature_parameters"]["featurewiz_params"].get(
+                    "feature_engg", ""
+                )
+                features = FeatureWiz(corr_limit=corr_limit, feature_engg=feature_engg,
+                                      category_encoders="", dask_xgboost_flag=False,
+                                      nrows=None, verbose=1)
+                X_train = features.fit_transform(X_train, y_train)
+                X_test = features.transform(X_test)
+                # print(features.features)
+
+                # Refresh Pool objs for catboost
+                train_data = Pool(data=X_train, label=y_train)
+                eval_data = Pool(data=X_test, label=y_test)
 
             # Feature selection logic
             if self.freqai_info['feature_parameters'].get("use_feature_selection_routine", False):
