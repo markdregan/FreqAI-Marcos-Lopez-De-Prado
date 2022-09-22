@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 class LitmusMinMaxRegretClassificationStrategy(IStrategy):
     """
     to run this:
-      freqtrade trade --strategy LitmusMinMaxThrustClassificationStrategy
-      --config user_data/strategies/config.LitmusMinMaxClassification.json
+      freqtrade trade --strategy LitmusMinMaxRegretClassificationStrategy
+      --config user_data/strategies/config.LitmusMinMaxRegretClassification.json
       --freqaimodel LitmusMultiTargetClassifier --verbose
     """
 
@@ -29,13 +29,22 @@ class LitmusMinMaxRegretClassificationStrategy(IStrategy):
                 "DI_values": {"color": "grey"},
             },
             "Long": {
-                "long_entry": {"color": "PaleGreen "},
+                "long_entry": {"color": "PaleGreen"},
                 "missed_long_entry": {"color": "ForestGreen"},
-                "long_entry_target": {"color": "PaleGreen "},
+                "long_entry_target": {"color": "PaleGreen"},
                 "missed_long_entry_target": {"color": "ForestGreen"},
                 "long_exit": {"color": "Salmon"},
-                "missed_long_exit": {"color": "Crimson "},
+                "missed_long_exit": {"color": "Crimson"},
                 "missed_long_exit_target": {"color": "Crimson "},
+            },
+            "Segment": {
+                "long_segment": {"color": "ForestGreen"},
+                "not_long_segment": {"color": "Crimson"}
+            },
+            "After": {
+                "after_long_top": {"color": "Crimson"},
+                "after_long_bottom": {"color": "ForestGreen"},
+                "not_after": {"color": "DarkGray"}
             },
             "Labels": {
                 "real_long_peaks": {"color": "Blue"},
@@ -172,35 +181,40 @@ class LitmusMinMaxRegretClassificationStrategy(IStrategy):
                 "min_retraction_long", -1)
             long_peaks = zigzag.peak_valley_pivots(
                 df["close"].values, min_growth_long, -min_retraction_long)
-            name_map = {0: "not_minmax", 1: "long_exit", -1: "long_entry",
-                        2: "missed_long_exit", -2: "missed_long_entry"}
+            long_segments = zigzag.pivots_to_modes(long_peaks)
+
+            # Set start and end as not peaks
             long_peaks[0] = 0  # Set first value of peaks = 0
             long_peaks[-1] = 0  # Set last value of peaks = 0
-            df["&long_target"] = long_peaks
-            df["&long_target"] = df["&long_target"].map(name_map)
             df["real_long_peaks"] = long_peaks
+
+            df["&long_target"] = long_peaks
+            name_map = {0: "not_minmax", 1: "long_exit", -1: "long_entry",
+                        2: "missed_long_exit", -2: "missed_long_entry"}
+            df["&long_target"] = df["&long_target"].map(name_map)
 
             # Missed entries & exits (labels)
             df.loc[(df["&long_target"].shift(1) == name_map[1]), "&long_target"] = name_map[2]
             df.loc[(df["&long_target"].shift(1) == name_map[-1]), "&long_target"] = name_map[-2]
 
-            """# Tripple barrier labels focusing on max/min thrust
-            tbm_upper = self.freqai_info["labeling_parameters"].get("tbm_upper", 0.1)
-            tbm_lower = self.freqai_info["labeling_parameters"].get("tbm_lower", 0.1)
-            tbm_vertical = self.freqai_info["labeling_parameters"].get("tbm_vertical", 10)
+            df.loc[(df["&long_target"].shift(2) == name_map[1]), "&long_target"] = name_map[2]
+            df.loc[(df["&long_target"].shift(2) == name_map[-1]), "&long_target"] = name_map[-2]
 
-            params = {"upper_pct": tbm_upper, "lower_pct": tbm_lower}
-            df["tripple_barrier_int"] = (
-                df["close"]
-                .shift(-tbm_vertical)
-                .rolling(tbm_vertical + 1)
-                .apply(tripple_barrier, kwargs=params)
-            )
-            name_map = {0: "vertical_barrier", 1: "upper_barrier", -1: "lower_barrier"}
-            df["tripple_barrier"] = df["tripple_barrier_int"].map(name_map)
+            # Long / Not Long Segments Classifier
+            df["&long_segment"] = long_segments
+            segment_name_map = {1: "long_segment", -1: "not_long_segment"}
+            df["&long_segment"] = df["&long_segment"].map(segment_name_map)
 
-            # Add flag to tripple_barrier so we can subsample later
-            df["tbm_mask"] = df["real_long_peaks"].isin([-2, -1, 1, 2])"""
+            # Just after peak classifier
+            segment_length = 8
+            df["&after_segment"] = long_peaks
+            df["&after_segment"] = df["&after_segment"].shift(1)
+            df["&after_segment"] = df["&after_segment"].rolling(segment_length).mean()
+            df["&after_segment"] = df["&after_segment"].apply(
+                lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
+            after_name_map = {1: "after_long_top", -1: "after_long_bottom", 0: "not_after"}
+            df["&after_segment"] = df["&after_segment"].map(after_name_map)
+            print(df[["&after_segment", "&long_target"]].head(50))
 
         return df
 
@@ -225,7 +239,7 @@ class LitmusMinMaxRegretClassificationStrategy(IStrategy):
         dataframe["missed_long_exit_target"] = (
             dataframe["missed_long_exit_mean"] + dataframe["missed_long_exit_std"] * exit_mul)
 
-        # Add prior model diagnostics as features
+        # Long segment rolling metric
         # TODO
 
         return dataframe

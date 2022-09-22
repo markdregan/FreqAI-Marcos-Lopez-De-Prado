@@ -140,17 +140,12 @@ class LitmusMultiLabelClassifier(IFreqaiModel):
         print(y_train)
         print(y_test)"""
 
-        # Address class imbalance
-        # https://github.com/theopsall/multiSmote/blob/master/multiSmote/multi_smote.py
-        """smote = SMOTE()
-        X_train, y_train = smote.fit_resample(X_train, y_train)"""
-
         # Create Pool objs for catboost
         train_data = Pool(data=X_train, label=y_train)
         eval_data = Pool(data=X_test, label=y_test)
 
         model = CatBoostClassifier(
-            iterations=1000, loss_function="MultiClass", allow_writing_files=False,
+            iterations=1000, loss_function="MultiLogloss", allow_writing_files=False,
             early_stopping_rounds=30, task_type="CPU", verbose=False)
         model.fit(X=train_data, eval_set=eval_data)
 

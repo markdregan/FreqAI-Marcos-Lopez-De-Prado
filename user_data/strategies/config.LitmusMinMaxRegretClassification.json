@@ -29,14 +29,11 @@
         "pair_whitelist": [
 	        "1INCH/USDT",
             "AAVE/USDT",
-            "ADA/USDT",
-            "SOL/USDT",
             "ALGO/USDT",
-            "DOGE/USDT",
-            "DYDX/USDT",
-            "ENJ/USDT",
-            "ETC/USDT",
-            "IOTA/USDT"
+            "ATOM/USDT",
+            "BCH/USDT",
+            "BNB/USDT",
+            "CRV/USDT"
         ],
         "pair_blacklist": []
     },
@@ -76,7 +73,7 @@
         "train_period_days": 30,
         "backtest_period_days": 0.1,
         "fit_live_predictions_candles": 250,
-        "identifier": "LitmusMinMaxThrustClassifier",
+        "identifier": "LitmusMinMaxRegretClassifier",
         "feature_parameters": {
             "include_timeframes": [
                 "3m",
@@ -86,7 +83,7 @@
             "include_corr_pairlist": [
                 "BTC/USDT"
             ],
-            "label_period_candles": 8,
+            "label_period_candles": 0,
             "include_shifted_candles": 2,
             "DI_threshold": 1.9,
             "weight_factor": 0.7,
@@ -136,7 +133,7 @@
             "max_f1_threshold_long_exit": 0,
             "max_f1_threshold_missed_long_entry": 0,
             "max_f1_threshold_missed_long_exit": 0,
-            "max_f1_threshold_not_minmax": 0,
+            "max_f1_threshold_not_minmax": 0
         }
     },
     "telegram": {

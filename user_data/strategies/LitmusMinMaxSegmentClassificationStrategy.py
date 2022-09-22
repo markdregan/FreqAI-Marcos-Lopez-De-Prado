@@ -11,11 +11,11 @@ import zigzag
 logger = logging.getLogger(__name__)
 
 
-class LitmusMinMaxClassificationStrategy(IStrategy):
+class LitmusMinMaxSegmentClassificationStrategy(IStrategy):
     """
     to run this:
-      freqtrade trade --strategy LitmusMinMaxClassificationStrategy
-      --config user_data/strategies/config.LitmusMinMaxClassification.json
+      freqtrade trade --strategy LitmusMinMaxSegmentClassificationStrategy
+      --config user_data/strategies/config.LitmusMinMaxSegmentClassification.json
       --freqaimodel LitmusMultiTargetClassifier --verbose
     """
 
@@ -28,24 +28,19 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "do_predict": {"color": "brown"},
                 "DI_values": {"color": "grey"},
             },
-            "Long": {
-                "missed2_minima": {"color": "PaleGreen"},
-                "missed1_minima": {"color": "ForestGreen"},
-                "missed_long_entry_target": {"color": "ForestGreen"},
-                "missed2_maxima": {"color": "Salmon"},
-                "missed1_maxima": {"color": "Crimson"},
-                "missed_long_exit_target": {"color": "Crimson"},
+            "Segments": {
+                "entry_threshold_long": {"color": "DarkGray"},
+                "entry_threshold_short": {"color": "DarkGray"},
+                "exit_threshold_long": {"color": "DarkGray"},
+                "exit_threshold_short": {"color": "DarkGray"},
+                "delta_segment_1x1x": {"color": "#4285F4"}
             },
-            "Short": {
-                "missed2_maxima": {"color": "PaleGreen"},
-                "missed1_maxima": {"color": "ForestGreen"},
-                "missed_short_entry_target": {"color": "ForestGreen"},
-                "missed2_minima": {"color": "Salmon"},
-                "missed1_minima": {"color": "Crimson"},
-                "missed_short_exit_target": {"color": "Crimson"},
+            "1X1X": {
+                "long_segment_1x1x": {"color": "ForestGreen"},
+                "short_segment_1x1x": {"color": "Crimson"}
             },
             "Labels": {
-                "real_peaks": {"color": "Blue"}
+                "real_segment_1x1x": {"color": "#4285F4"}
             },
             "Time": {
                 "time_to_train": {"color": "DarkGray"}
@@ -93,6 +88,10 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
         :param tf: timeframe of the dataframe which will modify the feature names
         :param informative: the dataframe associated with the informative pair
         """
+        """try:
+            print(df["%-long_entry_pred"].columns)
+        except:
+            pass"""
 
         coin = pair.split('/')[0]
 
@@ -136,7 +135,7 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             )
 
         # informative[f"%-{coin}-pct-change"] = informative["close"].pct_change()
-        # informative[f"%-{coin}-raw_volume"] = informative["volume"]
+        informative[f"%-{coin}-raw_volume"] = informative["volume"]
         # informative[f"%-{coin}-raw_price"] = informative["close"]
 
         indicators = [col for col in informative if col.startswith("%")]
@@ -161,32 +160,23 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             df["%-day_of_week"] = df["date"].dt.dayofweek
             df["%-hour_of_day"] = df["date"].dt.hour
 
-            # Zigzag min/max for long pivot positions
-            min_growth = self.freqai_info["labeling_parameters"].get(
-                "min_growth", -1)
-            min_retraction = self.freqai_info["labeling_parameters"].get(
-                "min_retraction", -1)
-            peaks = zigzag.peak_valley_pivots(
-                df["close"].values, min_growth, -min_retraction)
-            name_map = {0: "not_minmax", 1: "maxima", -1: "minima",
-                        2: "missed1_maxima", -2: "missed1_minima",
-                        3: "missed2_maxima", -3: "missed2_minima"}
-            peaks[0] = 0  # Set first value of peaks = 0
-            peaks[-1] = 0  # Set last value of peaks = 0
-            df["&target"] = peaks
-            df["&target"] = df["&target"].map(name_map)
-            df["real_peaks"] = peaks
+            # Segments: Long 1X Short 1X
+            min_growth_long = self.freqai_info["labeling_parameters"].get(
+                "min_growth_long", -1)
+            min_retraction_long = self.freqai_info["labeling_parameters"].get(
+                "min_retraction_long", -1)
+            peak_1x1x = zigzag.peak_valley_pivots(
+                df["close"].values, min_growth_long, -min_retraction_long)
+            segment_1x1x = zigzag.pivots_to_modes(peak_1x1x)
+            df["&segment_1x1x"] = segment_1x1x
+            df["&segment_1x1x"] = df["&segment_1x1x"].map(
+                {1: "long_segment_1x1x", -1: "short_segment_1x1x"})
+            df["real_segment_1x1x"] = peak_1x1x
 
-            # Missed entries & exits (labels)
-            df.loc[(df["&target"].shift(1) == name_map[1]), "&target"] = name_map[2]
-            df.loc[(df["&target"].shift(1) == name_map[-1]), "&target"] = name_map[-2]
-
-            df.loc[(df["&target"].shift(2) == name_map[2]), "&target"] = name_map[3]
-            df.loc[(df["&target"].shift(2) == name_map[-2]), "&target"] = name_map[-3]
-
-            # Reset minima / maxima label back to not_minmax (predictions not used)
-            df.loc[(df["&target"] == name_map[1]), "&target"] = name_map[0]
-            df.loc[(df["&target"] == name_map[-1]), "&target"] = name_map[0]
+            # Set start and end as not peaks
+            # TODO: Beginning and end of seq might not be correctly labeled
+            """long_peaks[0] = 0  # Set first value of peaks = 0
+            long_peaks[-1] = 0  # Set last value of peaks = 0"""
 
         return df
 
@@ -196,158 +186,62 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         dataframe = self.freqai.start(dataframe, metadata, self)
 
-        enter_mul = 2.6
-        exit_mul = 1.7
+        # Entry/Exit thresholds
+        dataframe["entry_threshold_long"] = 0.2
+        dataframe["entry_threshold_short"] = -0.2
+        dataframe["exit_threshold_long"] = 0
+        dataframe["exit_threshold_short"] = 0
 
-        # Long entry targets
-        dataframe["missed_long_entry_target"] = (
-            dataframe["missed1_minima_mean"] + dataframe["missed1_minima_std"] * enter_mul)
-
-        # Long exit targets
-        dataframe["missed_long_exit_target"] = (
-            dataframe["missed1_maxima_mean"] + dataframe["missed1_maxima_std"] * exit_mul)
-
-        # Short exit targets
-        dataframe["missed_short_exit_target"] = (
-                dataframe["missed1_minima_mean"] + dataframe["missed1_minima_std"] * exit_mul)
-
-        # Short entry targets
-        dataframe["missed_short_entry_target"] = (
-                dataframe["missed1_maxima_mean"] + dataframe["missed1_maxima_std"] * enter_mul)
+        # Delta Segment Predictions
+        dataframe["delta_segment_1x1x"] = (
+                dataframe["long_segment_1x1x"] - dataframe["short_segment_1x1x"])
 
         return dataframe
 
     def populate_entry_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
-        # Missed Long Entry
+        # Delta Segment Long Entry
         conditions = [
-            1 == 1,
-            qtpylib.crossed_above(df["missed1_minima"], df["missed_long_entry_target"])]
+            (df["delta_segment_1x1x"].shift(1) > 0),
+            (df["delta_segment_1x1x"] > df["entry_threshold_long"])]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
-            ] = (1, "missed1_minima")
+            ] = (1, "segment_1x1x_long")
 
-        # Missed Short Entry
+        # Delta Segment Short Entry
         conditions = [
-            1 == 1,
-            qtpylib.crossed_above(df["missed1_maxima"], df["missed_short_entry_target"])]
+            (df["delta_segment_1x1x"].shift(1) < 0),
+            (df["delta_segment_1x1x"] < df["entry_threshold_short"])]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
-            ] = (1, "missed1_maxima")
+            ] = (1, "segment_1x1x_short")
 
         return df
 
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
-        # Long Exit
+        # Delta Segment Long Exit
         conditions = [
-            1 == 1,
-            qtpylib.crossed_above(df["missed1_maxima"], df["missed_long_exit_target"])]
+            df["delta_segment_1x1x"].shift(1) > df["delta_segment_1x1x"]]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
-            ] = (1, "missed1_maxima")
+            ] = (1, "segment_1x1x_long")
 
-        # Short Exit
+        # Delta Segment Short Exit
         conditions = [
-            1 == 1,
-            qtpylib.crossed_above(df["missed1_minima"], df["missed_short_exit_target"])]
+            df["delta_segment_1x1x"].shift(1) < df["delta_segment_1x1x"]]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
-            ] = (1, "missed1_minima")
+            ] = (1, "segment_1x1x_short")
 
         return df
 
     def get_ticker_indicator(self):
         return int(self.config["timeframe"][:-1])
-
-    """def custom_exit(
-            self,
-            pair: str,
-            trade: Trade,
-            current_time: datetime,
-            current_rate: float,
-            current_profit: float,
-            **kwargs
-    ):
-
-        dataframe, _ = self.dp.get_analyzed_dataframe(pair=pair, timeframe=self.timeframe)
-
-        last_candle = dataframe.iloc[-1].squeeze()
-        trade_date = timeframe_to_prev_date(
-            self.timeframe, (trade.open_date_utc - timedelta(minutes=int(self.timeframe[:-1])))
-        )
-        trade_candle = dataframe.loc[(dataframe["date"] == trade_date)]
-        trade_df = dataframe.loc[(dataframe["date"] > trade_date)]
-        if trade_candle.empty:
-            return None
-        trade_candle = trade_candle.squeeze()
-        entry_tag = trade.enter_tag
-
-        trade_duration = (current_time - trade.open_date_utc).seconds / 60
-
-        if trade_duration > 500:
-            return 'trade expired'
-
-        if trade_df['maxima-exit'].sum() > 0 and entry_tag == 'long':
-            return 'maxima_missed'
-
-        if trade_df['minima-exit'].sum() > 0 and entry_tag == 'short':
-            return 'minima_missed'
-
-        if current_profit < -0.07:
-            return "stop_loss"
-
-        if last_candle['minima'] == 1 and entry_tag == 'short':
-            return "minimia_detected_short"
-
-        if last_candle['maxima'] == 1 and entry_tag == 'long':
-            return "maxima_detected_long"
-            """
-
-    """def confirm_trade_entry(
-            self,
-            pair: str,
-            order_type: str,
-            amount: float,
-            rate: float,
-            time_in_force: str,
-            current_time: datetime,
-            entry_tag: Optional[str],
-            side: str,
-            **kwargs
-    ) -> bool:
-
-        open_trades = Trade.get_trades(trade_filter=Trade.is_open.is_(True))
-
-        num_shorts, num_longs = 0, 0
-        for trade in open_trades:
-            if trade.enter_tag == 'short':
-                num_shorts += 1
-            elif trade.enter_tag == 'long':
-                num_longs += 1
-
-        if side == "long" and num_longs >= 4:
-            return False
-
-        if side == "short" and num_shorts >= 4:
-            return False
-
-        df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-        last_candle = df.iloc[-1].squeeze()
-
-        if side == "long":
-            if rate > (last_candle["close"] * (1 + 0.0025)):
-                return False
-        else:
-            if rate < (last_candle["close"] * (1 - 0.0025)):
-                return False
-
-        return True
-        """
 
     """def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
                             proposed_stake: float, min_stake: float, max_stake: float,
@@ -359,5 +253,4 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         bid = self.wallets.get_available_stake_amount() * current_candle["missed_long_entry"]
 
-        return bid
-        """
+        return bid"""

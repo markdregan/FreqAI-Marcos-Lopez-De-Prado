@@ -5,15 +5,14 @@ import numpy.typing as npt
 import pandas as pd
 import time
 
-from catboost import CatBoostClassifier, Pool, EFeaturesSelectionAlgorithm, EShapCalcType, EFstrType
-from featurewiz import FeatureWiz
+from catboost import CatBoostClassifier, Pool, EFeaturesSelectionAlgorithm, EShapCalcType
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
 from freqtrade.litmus.model_helpers import MergedModel
 from freqtrade.litmus.db_helpers import save_df_to_db
 from imblearn.over_sampling import SMOTE
 from pandas import DataFrame
-from sklearn.metrics import roc_auc_score, average_precision_score, precision_recall_curve
+# from sklearn.metrics import roc_auc_score, average_precision_score, precision_recall_curve
 from sklearn.preprocessing import LabelBinarizer
 from typing import Any, Dict, Tuple
 
@@ -118,6 +117,8 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
         models = []
 
         for t in data_dictionary["train_labels"].columns:
+            logger.info(f"Start training for target {t}")
+
             # Swap train and test data
             X_train = data_dictionary["test_features"]
             y_train = data_dictionary["test_labels"][t]
@@ -138,25 +139,6 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 **self.model_training_parameters
             )
 
-            # Featurewiz feature selection
-            if self.freqai_info["feature_parameters"].get("use_featurewiz", False):
-                corr_limit = self.freqai_info["feature_parameters"]["featurewiz_params"].get(
-                    "corr_limit", 0.9
-                )
-                feature_engg = self.freqai_info["feature_parameters"]["featurewiz_params"].get(
-                    "feature_engg", ""
-                )
-                features = FeatureWiz(corr_limit=corr_limit, feature_engg=feature_engg,
-                                      category_encoders="", dask_xgboost_flag=False,
-                                      nrows=None, verbose=1)
-                X_train = features.fit_transform(X_train, y_train)
-                X_test = features.transform(X_test)
-                # print(features.features)
-
-                # Refresh Pool objs for catboost
-                train_data = Pool(data=X_train, label=y_train)
-                eval_data = Pool(data=X_test, label=y_test)
-
             # Feature selection logic
             if self.freqai_info['feature_parameters'].get("use_feature_selection_routine", False):
                 # Get config params for feature selection
@@ -172,9 +154,6 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                     algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
                     shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=True)
 
-                # Loss Graph
-                print(summary["loss_graph"]["loss_values"])
-                print(np.argmin(summary["loss_graph"]["loss_values"]))
                 # Selected Features
                 selected = pd.DataFrame(summary["selected_features_names"],
                                         columns=["feature_name"])
@@ -195,7 +174,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             else:
                 model.fit(X=train_data, eval_set=eval_data)
 
-            # Compute feature importance & save
+            """# Compute feature importance & save
             feature_imp = model.get_feature_importance(
                 data=eval_data, type=EFstrType.LossFunctionChange, prettified=True)
             feature_imp.rename(columns={"Feature Id": "feature_id", "Importances": "importance"},
@@ -207,15 +186,22 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             feature_imp.set_index(keys=["model", "train_time", "pair", "feature_id"], inplace=True)
             save_df_to_db(df=feature_imp, table_name="feature_importance_history")
 
+
+            """
+
+            print(model.feature_importances_)
+
             # Model performance metrics
             encoder = LabelBinarizer()
             encoder.fit(y_train)
-            y_test_enc = encoder.transform(y_test)
-            y_pred_proba = model.predict_proba(X_test)
+            """y_test_enc = encoder.transform(y_test)
+            y_pred_proba = model.predict_proba(X_test)"""
+
+            dk.data["extra_returns_per_train"]["num_trees"] = model.tree_count_
 
             # Model performance metrics
             for i, c in enumerate(encoder.classes_):
-                # Area under ROC
+                """# Area under ROC
                 roc_auc = roc_auc_score(y_test_enc[:, i], y_pred_proba[:, i], average=None)
                 logger.info(f"{c} - ROC AUC score: {roc_auc}")
                 # Area under precision recall curve
@@ -233,7 +219,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 dk.data['extra_returns_per_train'][f"max_f1_{c}"] = max_f1
                 dk.data['extra_returns_per_train'][f"max_f1_threshold_{c}"] = max_f1_thresh
                 logger.info(f"{c} - Max F1 score: {max_f1}")
-                logger.info(f"{c} - Optimum Threshold Max F1 score: {max_f1_thresh}")
+                logger.info(f"{c} - Optimum Threshold Max F1 score: {max_f1_thresh}")"""
 
             models.append(model)
 
