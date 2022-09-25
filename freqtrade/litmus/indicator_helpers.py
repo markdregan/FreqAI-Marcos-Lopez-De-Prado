@@ -1,48 +1,14 @@
 # Helper functions for trading indicators
 
+import datetime
+import logging
+
 import numpy as np
 import pandas as pd
-from ta import add_all_ta_features
+from scipy import stats
 
 
-def heikin_ashi(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute Heiken Ashi candles for any OHLC timeseries."""
-
-    heikin_ashi_df = pd.DataFrame(index=df.index.values, columns=['open', 'high', 'low', 'close'])
-
-    heikin_ashi_df['close'] = (df['open'] + df['high'] + df['low'] + df['close']) / 4
-
-    for i in range(len(df)):
-        if i == 0:
-            heikin_ashi_df.iat[0, 0] = df['open'].iloc[0]
-        else:
-            heikin_ashi_df.iat[i, 0] = (heikin_ashi_df.iat[i - 1, 0] + heikin_ashi_df.iat[
-                i - 1, 3]) / 2
-
-    heikin_ashi_df['high'] = heikin_ashi_df.loc[:, ['open', 'close']].join(df['high']).max(axis=1)
-
-    heikin_ashi_df['low'] = heikin_ashi_df.loc[:, ['open', 'close']].join(df['low']).min(axis=1)
-
-    return heikin_ashi_df
-
-
-def add_all_ta_informative(df: pd.DataFrame, suffix: str) -> pd.DataFrame:
-    """Add TA features and rename columns"""
-
-    df_ta = add_all_ta_features(df, open="open", high="high", low="low",
-                                close="close", volume="volume", fillna=False)
-    df_ta.columns = [x + suffix for x in df_ta.columns]
-
-    return df_ta
-
-
-def add_single_ta_informative(df: pd.DataFrame, ta_method, suffix: str, col: str,
-                              **kwargs) -> pd.DataFrame:
-
-    df_ta = df.apply(lambda x: ta_method(x, **kwargs) if x.name == col else x)
-    df_ta.columns = [x + suffix for x in df_ta.columns]
-
-    return df_ta
+logger = logging.getLogger(__name__)
 
 
 def cusum_filter(df: pd.DataFrame, threshold_coeff: float) -> pd.DataFrame:
@@ -98,3 +64,38 @@ def daily_volatility(close: pd.DataFrame, shift: int, lookback: int):
     daily_volatility = log_returns_daily.ewm(span=lookback).std(ddof=0)
 
     return daily_volatility
+
+
+def exclude_weak_features(model: str, pair: str, exclusion_threshold: float) -> np.array:
+    """Identify weakest features from prior model feature selection routines
+    and exclude these from future training
+
+    :return list of column names that should be excluded for model + pair combo"""
+
+    # Read trial + win data from sqlite
+    connection_string = "sqlite:///litmus.sqlite"
+    from_unix_date = datetime.datetime.utcnow() - datetime.timedelta(days=10)
+    sql = f"""
+        SELECT
+            model, pair, feature_name,
+            SUM(selected) as wins, SUM(1) AS trials
+        FROM feature_selection_history
+        WHERE model = '{model}'
+        AND pair = '{pair}'
+        AND train_time > '{from_unix_date}'
+        GROUP BY 1,2,3"""
+
+    feat_history = pd.read_sql_query(sql=sql, con=connection_string)
+
+    # Generate random variate from distribution per feature based on prior inclusion / exclusion
+    feat_history["rvs"] = stats.beta.rvs(1 + feat_history["wins"], 1 + feat_history["trials"])
+
+    min_num_trials = 10
+    excluded = feat_history.loc[
+        (feat_history["rvs"] < exclusion_threshold) &
+        (feat_history["trials"] > min_num_trials), "feature_name"].to_numpy()
+
+    num_features_excluded = len(excluded)
+    logger.info(f"Excluding {num_features_excluded} features based on prior selection history")
+
+    return excluded

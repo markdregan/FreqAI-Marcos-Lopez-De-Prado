@@ -8,12 +8,16 @@ def tripple_barrier(df_col, upper_pct, lower_pct):
     """Return label associated with first time crossing of vertical, upper or lower barrier
 
     Example useage:
+        window = 5
+        params = {"upper_pct": 0.003, "lower_pct": 0.003}
         df["tripple_barrier"] = (
             df["close"]
             .shift(-window)
             .rolling(window + 1)
             .apply(tripple_barrier, kwargs=params)
         )
+        tbm_map = {1: "upper", 0: "vertical", -1: "lower"}
+        df["&tbm_target"] = df["tripple_barrier"].map(tbm_map)
     """
 
     initial_value = df_col.iat[0]

@@ -1,4 +1,5 @@
 # mypy: ignore-errors
+import datetime
 import logging
 import numpy as np
 import numpy.typing as npt
@@ -8,6 +9,7 @@ import time
 from catboost import CatBoostClassifier, Pool, EFeaturesSelectionAlgorithm, EShapCalcType
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
+from freqtrade.litmus.indicator_helpers import exclude_weak_features
 from freqtrade.litmus.model_helpers import MergedModel
 from freqtrade.litmus.db_helpers import save_df_to_db
 from imblearn.over_sampling import SMOTE
@@ -125,6 +127,17 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             X_test = data_dictionary["train_features"]
             y_test = data_dictionary["train_labels"][t]
 
+            # Remove weak features (based on prior inclusion history)
+            threshold = self.freqai_info["feature_parameters"].get("exclusion_threshold", 1)
+            if threshold < 1:
+                to_exclude = exclude_weak_features(
+                    model=t, pair=dk.pair, exclusion_threshold=threshold)
+                try:
+                    X_train = X_train.drop(columns=to_exclude)
+                    X_test = X_test.drop(columns=to_exclude)
+                except Exception as e:
+                    logger.info(f"Issues excluding features: {e}")
+
             # Address class imbalance
             if self.freqai_info['feature_parameters'].get('use_smote', False):
                 smote = SMOTE()
@@ -165,7 +178,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 # Save to Database
                 feature_df = pd.concat([selected, eliminated], ignore_index=True)
                 feature_df["pair"] = dk.pair
-                feature_df["train_time"] = time.time()
+                feature_df["train_time"] = datetime.datetime.utcnow()
                 feature_df["model"] = t
                 feature_df.set_index(
                     keys=["model", "train_time", "pair", "feature_name"], inplace=True)
@@ -189,15 +202,13 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
 
             """
 
-            print(model.feature_importances_)
-
             # Model performance metrics
             encoder = LabelBinarizer()
             encoder.fit(y_train)
             """y_test_enc = encoder.transform(y_test)
             y_pred_proba = model.predict_proba(X_test)"""
 
-            dk.data["extra_returns_per_train"]["num_trees"] = model.tree_count_
+            dk.data["extra_returns_per_train"][f"num_trees_{t}"] = model.tree_count_
 
             # Model performance metrics
             for i, c in enumerate(encoder.classes_):

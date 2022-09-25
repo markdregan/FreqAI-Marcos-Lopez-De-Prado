@@ -29,14 +29,14 @@
         "pair_whitelist": [
 	        "1INCH/USDT",
             "AAVE/USDT",
-            "ADA/USDT",
-            "SOL/USDT",
-            "ALGO/USDT",
             "DOGE/USDT",
-            "DYDX/USDT",
-            "ENJ/USDT",
             "ETC/USDT",
-            "IOTA/USDT"
+            "FIL/USDT",
+            "LTC/USDT",
+            "OMG/USDT",
+            "SNX/USDT",
+            "RUNE/USDT",
+            "YFI/USDT"
         ],
         "pair_blacklist": []
     },
@@ -106,23 +106,25 @@
                 "num_features_select": 300,
                 "steps": 2
             },
-            "use_smote": false
+            "use_smote": false,
+            "exclusion_threshold": 0.2
         },
         "data_split_parameters": {
             "test_size": 0.6,
             "shuffle": false
         },
         "labeling_parameters": {
-            "min_growth": 0.015,
-            "min_retraction": 0.015
+            "min_growth": 0.01,
+            "segment_min_growth": 0.002
         },
         "model_training_parameters": {
-            "n_estimators": 1000, "loss_function": "MultiClass", "metric_period": 5,
-            "early_stopping_rounds": 80, "task_type": "CPU", "verbose": 50
+            "n_estimators": 2000, "loss_function": "MultiClass", "metric_period": 10,
+            "early_stopping_rounds": 100, "task_type": "CPU", "verbose": 2
         },
         "extra_returns_per_train": {
             "time_to_train": 0,
-            "num_trees": 0
+            "num_trees_&target": 0,
+            "num_trees_&segments": 0
         }
     },
     "telegram": {
