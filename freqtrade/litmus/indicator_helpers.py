@@ -66,7 +66,8 @@ def daily_volatility(close: pd.DataFrame, shift: int, lookback: int):
     return daily_volatility
 
 
-def exclude_weak_features(model: str, pair: str, exclusion_threshold: float) -> np.array:
+def exclude_weak_features(model: str, pair: str, exclusion_threshold: float,
+                          min_num_trials: int) -> np.array:
     """Identify weakest features from prior model feature selection routines
     and exclude these from future training
 
@@ -85,17 +86,18 @@ def exclude_weak_features(model: str, pair: str, exclusion_threshold: float) -> 
         AND train_time > '{from_unix_date}'
         GROUP BY 1,2,3"""
 
-    feat_history = pd.read_sql_query(sql=sql, con=connection_string)
+    try:
+        feat_history = pd.read_sql_query(sql=sql, con=connection_string)
+    except Exception as e:
+        logger.info(f"Issue reading from SQL to exclude features {e}")
+        empty = np.array([])
+        return empty
 
     # Generate random variate from distribution per feature based on prior inclusion / exclusion
     feat_history["rvs"] = stats.beta.rvs(1 + feat_history["wins"], 1 + feat_history["trials"])
 
-    min_num_trials = 10
     excluded = feat_history.loc[
         (feat_history["rvs"] < exclusion_threshold) &
         (feat_history["trials"] > min_num_trials), "feature_name"].to_numpy()
-
-    num_features_excluded = len(excluded)
-    logger.info(f"Excluding {num_features_excluded} features based on prior selection history")
 
     return excluded

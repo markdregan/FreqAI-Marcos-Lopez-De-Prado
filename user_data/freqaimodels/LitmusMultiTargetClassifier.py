@@ -9,7 +9,6 @@ import time
 from catboost import CatBoostClassifier, Pool, EFeaturesSelectionAlgorithm, EShapCalcType
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
-from freqtrade.litmus.indicator_helpers import exclude_weak_features
 from freqtrade.litmus.model_helpers import MergedModel
 from freqtrade.litmus.db_helpers import save_df_to_db
 from imblearn.over_sampling import SMOTE
@@ -127,17 +126,6 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             X_test = data_dictionary["train_features"]
             y_test = data_dictionary["train_labels"][t]
 
-            # Remove weak features (based on prior inclusion history)
-            threshold = self.freqai_info["feature_parameters"].get("exclusion_threshold", 1)
-            if threshold < 1:
-                to_exclude = exclude_weak_features(
-                    model=t, pair=dk.pair, exclusion_threshold=threshold)
-                try:
-                    X_train = X_train.drop(columns=to_exclude)
-                    X_test = X_test.drop(columns=to_exclude)
-                except Exception as e:
-                    logger.info(f"Issues excluding features: {e}")
-
             # Address class imbalance
             if self.freqai_info['feature_parameters'].get('use_smote', False):
                 smote = SMOTE()
@@ -157,12 +145,14 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 # Get config params for feature selection
                 feature_selection_params = self.freqai_info['feature_parameters'].get(
                     "feature_selection_params", 0)
+                num_select = min(
+                    feature_selection_params["num_features_select"], len(X_train.columns))
 
                 # Run feature selection
                 all_feature_names = np.arange(len(X_train.columns))
                 summary = model.select_features(
                     X=train_data, eval_set=eval_data,
-                    num_features_to_select=feature_selection_params["num_features_select"],
+                    num_features_to_select=num_select,
                     features_for_select=all_feature_names, steps=feature_selection_params["steps"],
                     algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
                     shap_calc_type=EShapCalcType.Approximate, train_final_model=True, verbose=True)

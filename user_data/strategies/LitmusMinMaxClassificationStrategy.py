@@ -1,5 +1,4 @@
 from datetime import datetime
-from freqtrade.litmus.label_helpers import tripple_barrier
 from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy, merge_informative_pair
 from functools import reduce
@@ -48,20 +47,24 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "missed1_minima": {"color": "Crimson"},
                 "missed1_short_exit_target": {"color": "Crimson"},
             },
-            "TBM": {
-                "upper": {"color": "ForestGreen"},
-                "lower": {"color": "Crimson"},
-                "vertical": {"color": "Grey"},
+            "Segment": {
+                "long_segment": {"color": "ForestGreen"},
+                "short_segment": {"color": "Crimson"}
+            },
+            "SegT": {
+                "segment_delta_cum": {"color": "#4e8b88"},
+                "segment_delta": {"color": "#3c6864"}
             },
             "Labels": {
-                "real_peaks": {"color": "#FB9902"},
+                "real_segment_peaks": {"color": "#E8D4F7"},
+                "real_peaks": {"color": "#700CBC"},
             },
-            "Time": {
-                "time_to_train": {"color": "DarkGray"}
-            },
-            "Model": {
+            "Other": {
+                "time_to_train": {"color": "DarkGray"},
                 "num_trees_&target": {"color": "#700CBC"},
-                "num_trees_&tbm_target": {"color": "#E8D4F7"},
+                "num_trees_&segments": {"color": "#E8D4F7"},
+                "num_features_excluded_&target": {"color": "#700CBC"},
+                "num_features_excluded_&segments": {"color": "#E8D4F7"},
             },
         },
     }
@@ -192,15 +195,15 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             df.loc[(df["&target"].shift(1) == name_map[1]), "&target"] = name_map[2]
             df.loc[(df["&target"].shift(1) == name_map[-1]), "&target"] = name_map[-2]
 
-            df.loc[(df["&target"].shift(2) == name_map[2]), "&target"] = name_map[3]
-            df.loc[(df["&target"].shift(2) == name_map[-2]), "&target"] = name_map[-3]
+            df.loc[(df["&target"].shift(2) == name_map[1]), "&target"] = name_map[3]
+            df.loc[(df["&target"].shift(2) == name_map[-1]), "&target"] = name_map[-3]
 
             # Reset minima / maxima label back to not_minmax (predictions not used)
             df.loc[(df["&target"] == name_map[1]), "&target"] = name_map[0]
             df.loc[(df["&target"] == name_map[-1]), "&target"] = name_map[0]
 
-            # Segment Labels to bail on bad trades
-            """segment_min_growth = self.freqai_info["labeling_parameters"].get(
+            """# Segment Labels to bail on bad trades
+            segment_min_growth = self.freqai_info["labeling_parameters"].get(
                 "segment_min_growth", -1)
             segment_peaks = zigzag.peak_valley_pivots(
                 df["close"].values, segment_min_growth, -segment_min_growth)
@@ -209,18 +212,6 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
             df["&segments"] = df["&segments"].map(
                 {1: "long_segment", -1: "short_segment"})
             df["real_segment_peaks"] = segment_peaks"""
-
-            # Predict up/down/flat direction of next N candles
-            window = 2
-            params = {"upper_pct": 0.003, "lower_pct": 0.003}
-            df["tripple_barrier"] = (
-                df["close"]
-                .shift(-window)
-                .rolling(window + 1)
-                .apply(tripple_barrier, kwargs=params)
-            )
-            tbm_map = {1: "upper", 0: "vertical", -1: "lower"}
-            df["&tbm_target"] = df["tripple_barrier"].map(tbm_map)
 
         return df
 
@@ -256,6 +247,11 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
         # Short exit (missed2)
         dataframe["missed2_short_exit_target"] = (
                 dataframe["missed2_minima_mean"] + dataframe["missed2_minima_std"] * exit_mul)
+
+        # Segment Indicator Cumulative
+        """ewm_span = 5
+        dataframe["segment_delta"] = dataframe["long_segment"] - dataframe["short_segment"]
+        dataframe["segment_delta_cum"] = dataframe["segment_delta"].ewm(span=ewm_span).sum()"""
 
         return dataframe
 
@@ -333,25 +329,21 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
         :param side: 'long' or 'short' - indicating the direction of the proposed trade
         :return: A leverage amount, which is between 1.0 and max_leverage.
         """
-        return 2.0
 
-    def confirm_trade_entry(
-            self,
-            pair: str,
-            order_type: str,
-            amount: float,
-            rate: float,
-            time_in_force: str,
-            current_time: datetime,
-            entry_tag: Optional[str],
-            side: str,
-            **kwargs
-    ) -> bool:
+        fixed_leverage = self.freqai_info.get("fixed_leverage", 0)
+        if fixed_leverage > 0:
+            return fixed_leverage
+        else:
+            return 1.0
+
+    def confirm_trade_entry(self, pair: str, order_type: str, amount: float, rate: float,
+                            time_in_force: str, current_time: datetime, entry_tag: Optional[str],
+                            side: str, **kwargs) -> bool:
 
         open_trades = Trade.get_trades(trade_filter=Trade.is_open.is_(True))
 
         # Balance longs vs shorts to help protect against black swan event
-        max_open_trades = self.freqai_info["feature_parameters"].get("max_open_trades", 0)
+        max_open_trades = self.config.get("max_open_trades", 0)
         if max_open_trades > 0:
             num_shorts, num_longs = 0, 0
             for trade in open_trades:
@@ -379,19 +371,19 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         return True
 
-    use_custom_stoploss = True
+    # use_custom_stoploss = True
 
-    def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
+    """def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
                         current_rate: float, current_profit: float, **kwargs) -> float:
 
         if current_profit < 0.005:
             return -1  # keep using the inital stoploss
 
         # After reaching the desired offset, allow the stoploss to trail by half the profit
-        desired_stoploss = current_profit / 2
+        desired_stoploss = current_profit / 2.0
 
         # Use a minimum of 2.5% and a maximum of 5%
-        return max(min(desired_stoploss, 0.03), 0.005)
+        return max(min(desired_stoploss, 0.03), 0.01)"""
 
     """def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
                             proposed_stake: float, min_stake: float, max_stake: float,
