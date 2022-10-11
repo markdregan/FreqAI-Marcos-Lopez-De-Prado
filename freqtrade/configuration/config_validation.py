@@ -1,4 +1,5 @@
 import logging
+from collections import Counter
 from copy import deepcopy
 from typing import Any, Dict
 
@@ -85,6 +86,8 @@ def validate_config_consistency(conf: Dict[str, Any], preliminary: bool = False)
     _validate_unlimited_amount(conf)
     _validate_ask_orderbook(conf)
     _validate_freqai_hyperopt(conf)
+    _validate_freqai_include_timeframes(conf)
+    _validate_consumers(conf)
     validate_migrated_strategy_settings(conf)
 
     # validate configuration before returning
@@ -330,6 +333,43 @@ def _validate_freqai_hyperopt(conf: Dict[str, Any]) -> None:
     if analyze_per_epoch and freqai_enabled:
         raise OperationalException(
             'Using analyze-per-epoch parameter is not supported with a FreqAI strategy.')
+
+
+def _validate_freqai_include_timeframes(conf: Dict[str, Any]) -> None:
+    freqai_enabled = conf.get('freqai', {}).get('enabled', False)
+    if freqai_enabled:
+        main_tf = conf.get('timeframe', '5m')
+        freqai_include_timeframes = conf.get('freqai', {}).get('feature_parameters', {}
+                                                               ).get('include_timeframes', [])
+
+        from freqtrade.exchange import timeframe_to_seconds
+        main_tf_s = timeframe_to_seconds(main_tf)
+        offending_lines = []
+        for tf in freqai_include_timeframes:
+            tf_s = timeframe_to_seconds(tf)
+            if tf_s < main_tf_s:
+                offending_lines.append(tf)
+        if offending_lines:
+            raise OperationalException(
+                f"Main timeframe of {main_tf} must be smaller or equal to FreqAI "
+                f"`include_timeframes`.Offending include-timeframes: {', '.join(offending_lines)}")
+
+
+def _validate_consumers(conf: Dict[str, Any]) -> None:
+    emc_conf = conf.get('external_message_consumer', {})
+    if emc_conf.get('enabled', False):
+        if len(emc_conf.get('producers', [])) < 1:
+            raise OperationalException("You must specify at least 1 Producer to connect to.")
+
+        producer_names = [p['name'] for p in emc_conf.get('producers', [])]
+        duplicates = [item for item, count in Counter(producer_names).items() if count > 1]
+        if duplicates:
+            raise OperationalException(
+                f"Producer names must be unique. Duplicate: {', '.join(duplicates)}")
+        if conf.get('process_only_new_candles', True):
+            # Warning here or require it?
+            logger.warning("To receive best performance with external data, "
+                           "please set `process_only_new_candles` to False")
 
 
 def _strategy_settings(conf: Dict[str, Any]) -> None:

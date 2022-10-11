@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod, abstractproperty
 from copy import deepcopy
 from typing import Any, Dict, List
 
+from freqtrade.constants import Config
 from freqtrade.exceptions import OperationalException
 from freqtrade.exchange import Exchange, market_is_active
 from freqtrade.mixins import LoggingMixin
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 class IPairList(LoggingMixin, ABC):
 
     def __init__(self, exchange: Exchange, pairlistmanager,
-                 config: Dict[str, Any], pairlistconfig: Dict[str, Any],
+                 config: Config, pairlistconfig: Dict[str, Any],
                  pairlist_pos: int) -> None:
         """
         :param exchange: Exchange instance
@@ -68,7 +69,7 @@ class IPairList(LoggingMixin, ABC):
         filter_pairlist() method.
 
         :param pair: Pair that's currently validated
-        :param ticker: ticker dict as returned from ccxt.fetch_tickers()
+        :param ticker: ticker dict as returned from ccxt.fetch_ticker
         :return: True if the pair can stay, false if it should be removed
         """
         raise NotImplementedError()
@@ -84,7 +85,7 @@ class IPairList(LoggingMixin, ABC):
         it will raise the exception if a Pairlist Handler is used at the first
         position in the chain.
 
-        :param tickers: Tickers (from exchange.get_tickers()). May be cached.
+        :param tickers: Tickers (from exchange.get_tickers). May be cached.
         :return: List of pairs
         """
         raise OperationalException("This Pairlist Handler should not be used "
@@ -102,7 +103,7 @@ class IPairList(LoggingMixin, ABC):
         own filtration.
 
         :param pairlist: pairlist to filter or sort
-        :param tickers: Tickers (from exchange.get_tickers()). May be cached.
+        :param tickers: Tickers (from exchange.get_tickers). May be cached.
         :return: new whitelist
         """
         if self._enabled:

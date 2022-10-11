@@ -77,11 +77,14 @@ Example configuration showing the different settings:
     "enabled": true,
     "token": "your_telegram_token",
     "chat_id": "your_telegram_chat_id",
+    "allow_custom_messages": true,
     "notification_settings": {
         "status": "silent",
         "warning": "on",
         "startup": "off",
         "entry": "silent",
+        "entry_fill": "on",
+        "entry_cancel": "silent",
         "exit": {
             "roi": "silent",
             "emergency_exit": "on",
@@ -93,9 +96,7 @@ Example configuration showing the different settings:
             "custom_exit": "silent",
             "partial_exit": "on"
         },
-        "entry_cancel": "silent",
         "exit_cancel": "on",
-        "entry_fill": "off",
         "exit_fill": "off",
         "protection_trigger": "off",
         "protection_trigger_global": "on",
@@ -115,6 +116,7 @@ Example configuration showing the different settings:
 `show_candle` - show candle values as part of entry/exit messages. Only possible values are `"ohlc"` or `"off"`.
 
 `balance_dust_level` will define what the `/balance` command takes as "dust" - Currencies with a balance below this will be shown.
+`allow_custom_messages` completely disable strategy messages.
 `reload` allows you to disable reload-buttons on selected messages.
 
 ## Create a custom keyboard (command shortcut buttons)

@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 from cachetools import TTLCache
 
-from freqtrade.constants import ListPairsWithTimeframes
+from freqtrade.constants import Config, ListPairsWithTimeframes
 from freqtrade.exceptions import OperationalException
 from freqtrade.exchange import timeframe_to_minutes, timeframe_to_prev_date
 from freqtrade.misc import format_ms_time
@@ -25,7 +25,7 @@ SORT_VALUES = ['quoteVolume']
 class VolumePairList(IPairList):
 
     def __init__(self, exchange, pairlistmanager,
-                 config: Dict[str, Any], pairlistconfig: Dict[str, Any],
+                 config: Config, pairlistconfig: Dict[str, Any],
                  pairlist_pos: int) -> None:
         super().__init__(exchange, pairlistmanager, config, pairlistconfig, pairlist_pos)
 
@@ -113,7 +113,7 @@ class VolumePairList(IPairList):
     def gen_pairlist(self, tickers: Dict) -> List[str]:
         """
         Generate the pairlist
-        :param tickers: Tickers (from exchange.get_tickers()). May be cached.
+        :param tickers: Tickers (from exchange.get_tickers). May be cached.
         :return: List of pairs
         """
         # Generate dynamic whitelist
@@ -150,7 +150,7 @@ class VolumePairList(IPairList):
         Filters and sorts pairlist and returns the whitelist again.
         Called on each bot iteration - please use internal caching if necessary
         :param pairlist: pairlist to filter or sort
-        :param tickers: Tickers (from exchange.get_tickers()). May be cached.
+        :param tickers: Tickers (from exchange.get_tickers). May be cached.
         :return: new whitelist
         """
         if self._use_range:
@@ -231,7 +231,5 @@ class VolumePairList(IPairList):
         pairs = self.verify_blacklist(pairs, logmethod=logger.info)
         # Limit pairlist to the requested number of pairs
         pairs = pairs[:self._number_pairs]
-
-        self.log_once(f"Searching {self._number_pairs} pairs: {pairs}", logger.info)
 
         return pairs

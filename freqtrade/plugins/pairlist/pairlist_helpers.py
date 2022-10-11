@@ -1,5 +1,7 @@
 import re
-from typing import Any, Dict, List
+from typing import List
+
+from freqtrade.constants import Config
 
 
 def expand_pairlist(wildcardpl: List[str], available_pairs: List[str],
@@ -10,7 +12,7 @@ def expand_pairlist(wildcardpl: List[str], available_pairs: List[str],
     :param wildcardpl: List of Pairlists, which may contain regex
     :param available_pairs: List of all available pairs (`exchange.get_markets().keys()`)
     :param keep_invalid: If sets to True, drops invalid pairs silently while expanding regexes
-    :return expanded pairlist, with Regexes from wildcardpl applied to match all available pairs.
+    :return: expanded pairlist, with Regexes from wildcardpl applied to match all available pairs.
     :raises: ValueError if a wildcard is invalid (like '*/BTC' - which should be `.*/BTC`)
     """
     result = []
@@ -42,7 +44,7 @@ def expand_pairlist(wildcardpl: List[str], available_pairs: List[str],
     return result
 
 
-def dynamic_expand_pairlist(config: Dict[str, Any], markets: List[str]) -> List[str]:
+def dynamic_expand_pairlist(config: Config, markets: List[str]) -> List[str]:
     expanded_pairs = expand_pairlist(config['pairs'], markets)
     if config.get('freqai', {}).get('enabled', False):
         corr_pairlist = config['freqai']['feature_parameters']['include_corr_pairlist']

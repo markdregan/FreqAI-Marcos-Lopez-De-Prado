@@ -7,6 +7,7 @@ import logging
 from copy import deepcopy
 from typing import Any, Dict, List
 
+from freqtrade.constants import Config
 from freqtrade.plugins.pairlist.IPairList import IPairList
 
 
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 class StaticPairList(IPairList):
 
     def __init__(self, exchange, pairlistmanager,
-                 config: Dict[str, Any], pairlistconfig: Dict[str, Any],
+                 config: Config, pairlistconfig: Dict[str, Any],
                  pairlist_pos: int) -> None:
         super().__init__(exchange, pairlistmanager, config, pairlistconfig, pairlist_pos)
 
@@ -41,7 +42,7 @@ class StaticPairList(IPairList):
     def gen_pairlist(self, tickers: Dict) -> List[str]:
         """
         Generate the pairlist
-        :param tickers: Tickers (from exchange.get_tickers()). May be cached.
+        :param tickers: Tickers (from exchange.get_tickers). May be cached.
         :return: List of pairs
         """
         if self._allow_inactive:
@@ -57,7 +58,7 @@ class StaticPairList(IPairList):
         Filters and sorts pairlist and returns the whitelist again.
         Called on each bot iteration - please use internal caching if necessary
         :param pairlist: pairlist to filter or sort
-        :param tickers: Tickers (from exchange.get_tickers()). May be cached.
+        :param tickers: Tickers (from exchange.get_tickers). May be cached.
         :return: new whitelist
         """
         pairlist_ = deepcopy(pairlist)

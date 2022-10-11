@@ -1,16 +1,16 @@
 import logging
-from typing import Any, Dict
 
+from freqtrade.constants import Config
 from freqtrade.enums import RunMode
 from freqtrade.exceptions import OperationalException
-from freqtrade.exchange import (available_exchanges, is_exchange_known_ccxt,
-                                is_exchange_officially_supported, validate_exchange)
+from freqtrade.exchange import available_exchanges, is_exchange_known_ccxt, validate_exchange
+from freqtrade.exchange.common import MAP_EXCHANGE_CHILDCLASS, SUPPORTED_EXCHANGES
 
 
 logger = logging.getLogger(__name__)
 
 
-def check_exchange(config: Dict[str, Any], check_for_bad: bool = True) -> bool:
+def check_exchange(config: Config, check_for_bad: bool = True) -> bool:
     """
     Check if the exchange name in the config file is supported by Freqtrade
     :param check_for_bad: if True, check the exchange against the list of known 'bad'
@@ -52,7 +52,7 @@ def check_exchange(config: Dict[str, Any], check_for_bad: bool = True) -> bool:
         else:
             logger.warning(f'Exchange "{exchange}"  will not work with Freqtrade. Reason: {reason}')
 
-    if is_exchange_officially_supported(exchange):
+    if MAP_EXCHANGE_CHILDCLASS.get(exchange, exchange) in SUPPORTED_EXCHANGES:
         logger.info(f'Exchange "{exchange}" is officially supported '
                     f'by the Freqtrade development team.')
     else:

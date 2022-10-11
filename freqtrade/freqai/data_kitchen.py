@@ -18,6 +18,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.neighbors import NearestNeighbors
 
 from freqtrade.configuration import TimeRange
+from freqtrade.constants import Config
 from freqtrade.exceptions import OperationalException
 from freqtrade.exchange import timeframe_to_seconds
 from freqtrade.strategy.interface import IStrategy
@@ -57,7 +58,7 @@ class FreqaiDataKitchen:
 
     def __init__(
         self,
-        config: Dict[str, Any],
+        config: Config,
         live: bool = False,
         pair: str = "",
     ):
@@ -106,9 +107,8 @@ class FreqaiDataKitchen:
     ) -> None:
         """
         Set the paths to the data for the present coin/botloop
-        :params:
-        metadata: dict = strategy furnished pair metadata
-        trained_timestamp: int = timestamp of most recent training
+        :param metadata: dict = strategy furnished pair metadata
+        :param trained_timestamp: int = timestamp of most recent training
         """
         self.full_path = Path(
             self.config["user_data_dir"] / "models" / str(self.freqai_config.get("identifier"))
@@ -119,6 +119,8 @@ class FreqaiDataKitchen:
             / f"sub-train-{pair.split('/')[0]}_{trained_timestamp}"
         )
 
+        Path(self.data_path / 'tensorboard').mkdir(parents=True, exist_ok=True)
+
         return
 
     def make_train_test_datasets(
@@ -128,24 +130,19 @@ class FreqaiDataKitchen:
         Given the dataframe for the full history for training, split the data into
         training and test data according to user specified parameters in configuration
         file.
-        :filtered_dataframe: cleaned dataframe ready to be split.
-        :labels: cleaned labels ready to be split.
+        :param filtered_dataframe: cleaned dataframe ready to be split.
+        :param labels: cleaned labels ready to be split.
         """
         feat_dict = self.freqai_config["feature_parameters"]
+
+        if 'shuffle' not in self.freqai_config['data_split_parameters']:
+            self.freqai_config["data_split_parameters"].update({'shuffle': False})
 
         weights: npt.ArrayLike
         if feat_dict.get("weight_factor", 0) > 0:
             weights = self.set_weights_higher_recent(len(filtered_dataframe))
         else:
             weights = np.ones(len(filtered_dataframe))
-
-        if feat_dict.get("stratify_training_data", 0) > 0:
-            stratification = np.zeros(len(filtered_dataframe))
-            for i in range(1, len(stratification)):
-                if i % feat_dict.get("stratify_training_data", 0) == 0:
-                    stratification[i] = 1
-        else:
-            stratification = None
 
         if self.freqai_config.get('data_split_parameters', {}).get('test_size', 0.1) != 0:
             (
@@ -159,7 +156,6 @@ class FreqaiDataKitchen:
                 filtered_dataframe[: filtered_dataframe.shape[0]],
                 labels,
                 weights,
-                stratify=stratification,
                 **self.config["freqai"]["data_split_parameters"],
             )
         else:
@@ -194,13 +190,14 @@ class FreqaiDataKitchen:
         remove all NaNs. Any row with a NaN is removed from training dataset or replaced with
         0s in the prediction dataset. However, prediction dataset do_predict will reflect any
         row that had a NaN and will shield user from that prediction.
-        :params:
-        :unfiltered_df: the full dataframe for the present training period
-        :training_feature_list: list, the training feature list constructed by
-        self.build_feature_list() according to user specified parameters in the configuration file.
-        :labels: the labels for the dataset
-        :training_filter: boolean which lets the function know if it is training data or
-        prediction data to be filtered.
+
+        :param unfiltered_df: the full dataframe for the present training period
+        :param training_feature_list: list, the training feature list constructed by
+                                      self.build_feature_list() according to user specified
+                                      parameters in the configuration file.
+        :param labels: the labels for the dataset
+        :param training_filter: boolean which lets the function know if it is training data or
+                                prediction data to be filtered.
         :returns:
         :filtered_df: dataframe cleaned of NaNs and only containing the user
         requested feature set.
@@ -209,7 +206,7 @@ class FreqaiDataKitchen:
         filtered_df = unfiltered_df.filter(training_feature_list, axis=1)
         filtered_df = filtered_df.replace([np.inf, -np.inf], np.nan)
 
-        drop_index = pd.isnull(filtered_df).any(1)  # get the rows that have NaNs,
+        drop_index = pd.isnull(filtered_df).any(axis=1)  # get the rows that have NaNs,
         drop_index = drop_index.replace(True, 1).replace(False, 0)  # pep8 requirement.
         if (training_filter):
             const_cols = list((filtered_df.nunique() == 1).loc[lambda x: x].index)
@@ -220,7 +217,7 @@ class FreqaiDataKitchen:
             # about removing any row with NaNs
             # if labels has multiple columns (user wants to train multiple modelEs), we detect here
             labels = unfiltered_df.filter(label_list, axis=1)
-            drop_index_labels = pd.isnull(labels).any(1)
+            drop_index_labels = pd.isnull(labels).any(axis=1)
             drop_index_labels = drop_index_labels.replace(True, 1).replace(False, 0)
             dates = unfiltered_df['date']
             filtered_df = filtered_df[
@@ -246,9 +243,10 @@ class FreqaiDataKitchen:
             self.data["filter_drop_index_training"] = drop_index
 
         else:
+            filtered_df = self.check_pred_labels(filtered_df)
             # we are backtesting so we need to preserve row number to send back to strategy,
             # so now we use do_predict to avoid any prediction based on a NaN
-            drop_index = pd.isnull(filtered_df).any(1)
+            drop_index = pd.isnull(filtered_df).any(axis=1)
             self.data["filter_drop_index_prediction"] = drop_index
             filtered_df.fillna(0, inplace=True)
             # replacing all NaNs with zeros to avoid issues in 'prediction', but any prediction
@@ -290,8 +288,8 @@ class FreqaiDataKitchen:
     def normalize_data(self, data_dictionary: Dict) -> Dict[Any, Any]:
         """
         Normalize all data in the data_dictionary according to the training dataset
-        :params:
-        :data_dictionary: dictionary containing the cleaned and split training/test data/labels
+        :param data_dictionary: dictionary containing the cleaned and
+                                split training/test data/labels
         :returns:
         :data_dictionary: updated dictionary with standardized values.
         """
@@ -465,26 +463,23 @@ class FreqaiDataKitchen:
 
         return df
 
-    def remove_training_from_backtesting(
-        self
-    ) -> DataFrame:
+    def check_pred_labels(self, df_predictions: DataFrame) -> DataFrame:
         """
-        Function which takes the backtesting time range and
-        remove training data from dataframe, keeping only the
-        startup_candle_count candles
+        Check that prediction feature labels match training feature labels.
+        :params:
+        :df_predictions: incoming predictions
         """
-        startup_candle_count = self.config.get('startup_candle_count', 0)
-        tf = self.config['timeframe']
-        tr = self.config["timerange"]
+        train_labels = self.data_dictionary["train_features"].columns
+        pred_labels = df_predictions.columns
+        num_diffs = len(pred_labels.difference(train_labels))
+        if num_diffs != 0:
+            df_predictions = df_predictions[train_labels]
+            logger.warning(
+                f"Removed {num_diffs} features from prediction features, "
+                f"these were likely considered constant values during most recent training."
+            )
 
-        backtesting_timerange = TimeRange.parse_timerange(tr)
-        if startup_candle_count > 0 and backtesting_timerange:
-            backtesting_timerange.subtract_start(timeframe_to_seconds(tf) * startup_candle_count)
-
-        start = datetime.fromtimestamp(backtesting_timerange.startts, tz=timezone.utc)
-        df = self.return_dataframe
-        df = df.loc[df["date"] >= start, :]
-        return df
+        return df_predictions
 
     def principal_component_analysis(self) -> None:
         """
@@ -542,8 +537,7 @@ class FreqaiDataKitchen:
     def pca_transform(self, filtered_dataframe: DataFrame) -> None:
         """
         Use an existing pca transform to transform data into components
-        :params:
-        filtered_dataframe: DataFrame = the cleaned dataframe
+        :param filtered_dataframe: DataFrame = the cleaned dataframe
         """
         pca_components = self.pca.transform(filtered_dataframe)
         self.data_dictionary["prediction_features"] = pd.DataFrame(
@@ -587,8 +581,7 @@ class FreqaiDataKitchen:
         """
         Build/inference a Support Vector Machine to detect outliers
         in training data and prediction
-        :params:
-        predict: bool = If true, inference an existing SVM model, else construct one
+        :param predict: bool = If true, inference an existing SVM model, else construct one
         """
 
         if self.keras:
@@ -673,11 +666,11 @@ class FreqaiDataKitchen:
         Use DBSCAN to cluster training data and remove "noisy" data (read outliers).
         User controls this via the config param `DBSCAN_outlier_pct` which indicates the
         pct of training data that they want to be considered outliers.
-        :params:
-        predict: bool = If False (training), iterate to find the best hyper parameters to match
-        user requested outlier percent target. If True (prediction), use the parameters
-        determined from the previous training to estimate if the current prediction point
-        is an outlier.
+        :param predict: bool = If False (training), iterate to find the best hyper parameters
+                        to match user requested outlier percent target.
+                        If True (prediction), use the parameters determined from
+                        the previous training to estimate if the current prediction point
+                        is an outlier.
         """
 
         if predict:
@@ -774,11 +767,21 @@ class FreqaiDataKitchen:
 
     def compute_inlier_metric(self, set_='train') -> None:
         """
-
         Compute inlier metric from backwards distance distributions.
         This metric defines how well features from a timepoint fit
         into previous timepoints.
         """
+
+        def normalise(dataframe: DataFrame, key: str) -> DataFrame:
+            if set_ == 'train':
+                min_value = dataframe.min()
+                max_value = dataframe.max()
+                self.data[f'{key}_min'] = min_value
+                self.data[f'{key}_max'] = max_value
+            else:
+                min_value = self.data[f'{key}_min']
+                max_value = self.data[f'{key}_max']
+            return (dataframe - min_value) / (max_value - min_value)
 
         no_prev_pts = self.freqai_config["feature_parameters"]["inlier_metric_window"]
 
@@ -818,13 +821,18 @@ class FreqaiDataKitchen:
                 :, :no_prev_pts
             ]
         distances = distances.replace([np.inf, -np.inf], np.nan)
-        drop_index = pd.isnull(distances).any(1)
+        drop_index = pd.isnull(distances).any(axis=1)
         distances = distances[drop_index == 0]
 
         inliers = pd.DataFrame(index=distances.index)
         for key in distances.keys():
             current_distances = distances[key].dropna()
-            fit_params = stats.weibull_min.fit(current_distances)
+            current_distances = normalise(current_distances, key)
+            if set_ == 'train':
+                fit_params = stats.weibull_min.fit(current_distances)
+                self.data[f'{key}_fit_params'] = fit_params
+            else:
+                fit_params = self.data[f'{key}_fit_params']
             quantiles = stats.weibull_min.cdf(current_distances, *fit_params)
 
             df_inlier = pd.DataFrame(
@@ -836,7 +844,7 @@ class FreqaiDataKitchen:
 
         inlier_metric = pd.DataFrame(
             data=inliers.sum(axis=1) / no_prev_pts,
-            columns=['inlier_metric'],
+            columns=['%-inlier_metric'],
             index=compute_df.index
         )
 
@@ -886,11 +894,15 @@ class FreqaiDataKitchen:
         """
         column_names = dataframe.columns
         features = [c for c in column_names if "%" in c]
-        labels = [c for c in column_names if "&" in c]
+
         if not features:
             raise OperationalException("Could not find any features!")
 
         self.training_features_list = features
+
+    def find_labels(self, dataframe: DataFrame) -> None:
+        column_names = dataframe.columns
+        labels = [c for c in column_names if "&" in c]
         self.label_list = labels
 
     def check_if_pred_in_training_spaces(self) -> None:
@@ -978,8 +990,6 @@ class FreqaiDataKitchen:
 
         to_keep = [col for col in dataframe.columns if not col.startswith("&")]
         self.return_dataframe = pd.concat([dataframe[to_keep], self.full_df], axis=1)
-
-        self.return_dataframe = self.remove_training_from_backtesting()
         self.full_df = DataFrame()
 
         return
@@ -1127,15 +1137,13 @@ class FreqaiDataKitchen:
         prediction_dataframe: DataFrame = pd.DataFrame(),
     ) -> DataFrame:
         """
-        Use the user defined strategy for populating indicators during
-        retrain
-        :params:
-        strategy: IStrategy = user defined strategy object
-        corr_dataframes: dict = dict containing the informative pair dataframes
-        (for user defined timeframes)
-        base_dataframes: dict = dict containing the current pair dataframes
-        (for user defined timeframes)
-        metadata: dict = strategy furnished pair metadata
+        Use the user defined strategy for populating indicators during retrain
+        :param strategy: IStrategy = user defined strategy object
+        :param corr_dataframes: dict = dict containing the informative pair dataframes
+                                (for user defined timeframes)
+        :param base_dataframes: dict = dict containing the current pair dataframes
+                                (for user defined timeframes)
+        :param metadata: dict = strategy furnished pair metadata
         :returns:
         dataframe: DataFrame = dataframe containing populated indicators
         """
@@ -1213,7 +1221,8 @@ class FreqaiDataKitchen:
 
     def get_unique_classes_from_labels(self, dataframe: DataFrame) -> None:
 
-        self.find_features(dataframe)
+        # self.find_features(dataframe)
+        self.find_labels(dataframe)
 
         for key in self.label_list:
             if dataframe[key].dtype == object:

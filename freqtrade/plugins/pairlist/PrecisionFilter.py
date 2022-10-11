@@ -4,6 +4,7 @@ Precision pair list filter
 import logging
 from typing import Any, Dict
 
+from freqtrade.constants import Config
 from freqtrade.exceptions import OperationalException
 from freqtrade.plugins.pairlist.IPairList import IPairList
 
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 class PrecisionFilter(IPairList):
 
     def __init__(self, exchange, pairlistmanager,
-                 config: Dict[str, Any], pairlistconfig: Dict[str, Any],
+                 config: Config, pairlistconfig: Dict[str, Any],
                  pairlist_pos: int) -> None:
         super().__init__(exchange, pairlistmanager, config, pairlistconfig, pairlist_pos)
 
@@ -48,7 +49,7 @@ class PrecisionFilter(IPairList):
         Check if pair has enough room to add a stoploss to avoid "unsellable" buys of very
         low value pairs.
         :param pair: Pair that's currently validated
-        :param ticker: ticker dict as returned from ccxt.fetch_tickers()
+        :param ticker: ticker dict as returned from ccxt.fetch_ticker
         :return: True if the pair can stay, false if it should be removed
         """
         if ticker.get('last', None) is None:

@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, Mock, PropertyMock
 
 import arrow
 import numpy as np
+import pandas as pd
 import pytest
 from telegram import Chat, Message, Update
 
@@ -19,6 +20,7 @@ from freqtrade.data.converter import ohlcv_to_dataframe
 from freqtrade.edge import PairInfo
 from freqtrade.enums import CandleType, MarginMode, RunMode, SignalDirection, TradingMode
 from freqtrade.exchange import Exchange
+from freqtrade.exchange.exchange import timeframe_to_minutes
 from freqtrade.freqtradebot import FreqtradeBot
 from freqtrade.persistence import LocalTrade, Order, Trade, init_db
 from freqtrade.resolvers import ExchangeResolver
@@ -58,6 +60,11 @@ def log_has(line, logs):
     return any(line == message for message in logs.messages)
 
 
+def log_has_when(line, logs, when):
+    """Check if line is found in caplog's messages during a specified stage"""
+    return any(line == message.message for message in logs.get_records(when))
+
+
 def log_has_re(line, logs):
     """Check if line matches some caplog's message."""
     return any(re.match(line, message) for message in logs.messages)
@@ -75,6 +82,33 @@ def num_log_has_re(line, logs):
 
 def get_args(args):
     return Arguments(args).get_parsed_arg()
+
+
+def generate_test_data(timeframe: str, size: int, start: str = '2020-07-05'):
+    np.random.seed(42)
+    tf_mins = timeframe_to_minutes(timeframe)
+
+    base = np.random.normal(20, 2, size=size)
+
+    date = pd.date_range(start, periods=size, freq=f'{tf_mins}min', tz='UTC')
+    df = pd.DataFrame({
+        'date': date,
+        'open': base,
+        'high': base + np.random.normal(2, 1, size=size),
+        'low': base - np.random.normal(2, 1, size=size),
+        'close': base + np.random.normal(0, 1, size=size),
+        'volume': np.random.normal(200, size=size)
+    }
+    )
+    df = df.dropna()
+    return df
+
+
+def generate_test_data_raw(timeframe: str, size: int, start: str = '2020-07-05'):
+    """ Generates data in the ohlcv format used by ccxt """
+    df = generate_test_data(timeframe, size, start)
+    df['date'] = df.loc[:, 'date'].view(np.int64) // 1000 // 1000
+    return list(list(x) for x in zip(*(df[x].values.tolist() for x in df.columns)))
 
 
 # Source: https://stackoverflow.com/questions/29881236/how-to-mock-asyncio-coroutines
@@ -195,6 +229,8 @@ def patch_freqtradebot(mocker, config) -> None:
     mocker.patch('freqtrade.freqtradebot.RPCManager._init', MagicMock())
     mocker.patch('freqtrade.freqtradebot.RPCManager.send_msg', MagicMock())
     patch_whitelist(mocker, config)
+    mocker.patch('freqtrade.freqtradebot.ExternalMessageConsumer')
+    mocker.patch('freqtrade.configuration.config_validation._validate_consumers')
 
 
 def get_patched_freqtradebot(mocker, config) -> FreqtradeBot:
@@ -2282,7 +2318,7 @@ def tickers():
 
 
 @pytest.fixture
-def result(testdatadir):
+def dataframe_1m(testdatadir):
     with (testdatadir / 'UNITTEST_BTC-1m.json').open('r') as data_file:
         return ohlcv_to_dataframe(json.load(data_file), '1m', pair="UNITTEST/BTC",
                                   fill_missing=True)
