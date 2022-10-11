@@ -14,11 +14,11 @@ import zigzag
 logger = logging.getLogger(__name__)
 
 
-class LitmusMinMaxClassificationStrategy(IStrategy):
+class LitmusMinMaxBroadClassificationStrategy(IStrategy):
     """
     to run this:
-      freqtrade trade --strategy LitmusMinMaxClassificationStrategy
-      --config user_data/strategies/config.LitmusMinMaxClassification.json
+      freqtrade trade --strategy LitmusMinMaxBroadClassificationStrategy
+      --config user_data/strategies/config.LitmusMinMaxBroadClassification.json
       --freqaimodel LitmusMultiTargetClassifier --verbose
     """
 
@@ -32,39 +32,22 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "DI_values": {"color": "grey"},
             },
             "Long": {
-                "missed2_minima": {"color": "PaleGreen"},
-                "missed1_minima": {"color": "ForestGreen"},
-                "missed1_long_entry_target": {"color": "ForestGreen"},
-                "missed2_maxima": {"color": "Salmon"},
-                "missed1_maxima": {"color": "Crimson"},
-                "missed1_long_exit_target": {"color": "Crimson"},
+                "minima": {"color": "PaleGreen"},
+                "long_entry_target": {"color": "ForestGreen"},
+                "maxima": {"color": "Salmon"},
+                "long_exit_target": {"color": "Crimson"},
             },
             "Short": {
-                "missed2_maxima": {"color": "PaleGreen"},
-                "missed1_maxima": {"color": "ForestGreen"},
-                "missed1_short_entry_target": {"color": "ForestGreen"},
-                "missed2_minima": {"color": "Salmon"},
-                "missed1_minima": {"color": "Crimson"},
-                "missed1_short_exit_target": {"color": "Crimson"},
-            },
-            "Segment": {
-                "long_segment": {"color": "ForestGreen"},
-                "short_segment": {"color": "Crimson"}
-            },
-            "SegT": {
-                "segment_delta_cum": {"color": "#4e8b88"},
-                "segment_delta": {"color": "#3c6864"}
+                "maxima": {"color": "PaleGreen"},
+                "short_entry_target": {"color": "ForestGreen"},
+                "minima": {"color": "Salmon"},
+                "short_exit_target": {"color": "Crimson"},
             },
             "Labels": {
-                "real_segment_peaks": {"color": "#E8D4F7"},
                 "real_peaks": {"color": "#700CBC"},
             },
             "Other": {
-                "time_to_train": {"color": "DarkGray"},
-                "num_trees_&target": {"color": "#700CBC"},
-                "num_trees_&segments": {"color": "#E8D4F7"},
-                "num_features_excluded_&target": {"color": "#700CBC"},
-                "num_features_excluded_&segments": {"color": "#E8D4F7"},
+                "time_to_train": {"color": "DarkGray"}
             },
         },
     }
@@ -182,36 +165,24 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
                 "min_growth", -1)
             peaks = zigzag.peak_valley_pivots(
                 df["close"].values, min_growth, -min_growth)
-            name_map = {0: "not_minmax", 1: "maxima", -1: "minima",
-                        2: "missed1_maxima", -2: "missed1_minima",
-                        3: "missed2_maxima", -3: "missed2_minima"}
-            peaks[0] = 0  # Set first value of peaks = 0
-            peaks[-1] = 0  # Set last value of peaks = 0
-            df["&target"] = peaks
-            df["&target"] = df["&target"].map(name_map)
+
+            max_peaks = [i if i == 1 else 0 for i in peaks]
+            min_peaks = [i if i == -1 else 0 for i in peaks]
+
+            name_map = {0: "not_minmax", 1: "maxima", -1: "minima"}
+
+            max_peaks[0] = 0  # Set first value of max_peaks = 0
+            max_peaks[-1] = 0  # Set last value of max_peaks = 0
+            min_peaks[0] = 0  # Set first value of min_peaks = 0
+            min_peaks[-1] = 0  # Set last value of min_peaks = 0
+
+            df["&max_target"] = max_peaks
+            df["&max_target"] = df["&max_target"].map(name_map)
+
+            df["&min_target"] = min_peaks
+            df["&min_target"] = df["&min_target"].map(name_map)
+
             df["real_peaks"] = peaks
-
-            # Missed entries & exits (labels)
-            df.loc[(df["&target"].shift(1) == name_map[1]), "&target"] = name_map[2]
-            df.loc[(df["&target"].shift(1) == name_map[-1]), "&target"] = name_map[-2]
-
-            df.loc[(df["&target"].shift(2) == name_map[1]), "&target"] = name_map[3]
-            df.loc[(df["&target"].shift(2) == name_map[-1]), "&target"] = name_map[-3]
-
-            # Reset minima / maxima label back to not_minmax (predictions not used)
-            df.loc[(df["&target"] == name_map[1]), "&target"] = name_map[0]
-            df.loc[(df["&target"] == name_map[-1]), "&target"] = name_map[0]
-
-            """# Segment Labels to bail on bad trades
-            segment_min_growth = self.freqai_info["labeling_parameters"].get(
-                "segment_min_growth", -1)
-            segment_peaks = zigzag.peak_valley_pivots(
-                df["close"].values, segment_min_growth, -segment_min_growth)
-            segments = zigzag.pivots_to_modes(segment_peaks)
-            df["&segments"] = segments
-            df["&segments"] = df["&segments"].map(
-                {1: "long_segment", -1: "short_segment"})
-            df["real_segment_peaks"] = segment_peaks"""
 
         return df
 
@@ -224,34 +195,21 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
         enter_mul = 3
         exit_mul = 2
 
-        # Long entry (missed1)
-        dataframe["missed1_long_entry_target"] = (
-            dataframe["missed1_minima_mean"] + dataframe["missed1_minima_std"] * enter_mul)
+        # Long entry
+        dataframe["long_entry_target"] = (
+            dataframe["minima_mean"] + dataframe["minima_std"] * enter_mul)
 
-        # Long exit (missed1))
-        dataframe["missed1_long_exit_target"] = (
-            dataframe["missed1_maxima_mean"] + dataframe["missed1_maxima_std"] * exit_mul)
+        # Long exit
+        dataframe["long_exit_target"] = (
+            dataframe["maxima_mean"] + dataframe["maxima_std"] * exit_mul)
 
-        # Long exit (missed2))
-        dataframe["missed2_long_exit_target"] = (
-                dataframe["missed2_maxima_mean"] + dataframe["missed2_maxima_std"] * exit_mul)
+        # Short entry
+        dataframe["short_entry_target"] = (
+                dataframe["maxima_mean"] + dataframe["maxima_std"] * enter_mul)
 
-        # Short entry (missed1)
-        dataframe["missed1_short_entry_target"] = (
-                dataframe["missed1_maxima_mean"] + dataframe["missed1_maxima_std"] * enter_mul)
-
-        # Short exit (missed1)
-        dataframe["missed1_short_exit_target"] = (
-                dataframe["missed1_minima_mean"] + dataframe["missed1_minima_std"] * exit_mul)
-
-        # Short exit (missed2)
-        dataframe["missed2_short_exit_target"] = (
-                dataframe["missed2_minima_mean"] + dataframe["missed2_minima_std"] * exit_mul)
-
-        # Segment Indicator Cumulative
-        """ewm_span = 5
-        dataframe["segment_delta"] = dataframe["long_segment"] - dataframe["short_segment"]
-        dataframe["segment_delta_cum"] = dataframe["segment_delta"].ewm(span=ewm_span).sum()"""
+        # Short exit
+        dataframe["short_exit_target"] = (
+                dataframe["minima_mean"] + dataframe["minima_std"] * exit_mul)
 
         return dataframe
 
@@ -259,55 +217,39 @@ class LitmusMinMaxClassificationStrategy(IStrategy):
 
         # Missed Long Entry
         conditions = [
-            qtpylib.crossed_above(df["missed1_minima"], df["missed1_long_entry_target"])]
+            qtpylib.crossed_above(df["minima"], df["long_entry_target"])]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
-            ] = (1, "missed1_minima")
+            ] = (1, "minima")
 
         # Missed Short Entry
         conditions = [
-            qtpylib.crossed_above(df["missed1_maxima"], df["missed1_short_entry_target"])]
+            qtpylib.crossed_above(df["maxima"], df["short_entry_target"])]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
-            ] = (1, "missed1_maxima")
+            ] = (1, "maxima")
 
         return df
 
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
-        # Long Exit (missed1)
+        # Long Exit
         conditions = [
-            qtpylib.crossed_above(df["missed1_maxima"], df["missed1_long_exit_target"])]
+            qtpylib.crossed_above(df["maxima"], df["long_exit_target"])]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
-            ] = (1, "missed1_maxima")
+            ] = (1, "maxima")
 
-        # Long Exit (missed2)
+        # Short Exit
         conditions = [
-            qtpylib.crossed_above(df["missed2_maxima"], df["missed2_long_exit_target"])]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
-            ] = (1, "missed2_maxima")
-
-        # Short Exit (missed1)
-        conditions = [
-            qtpylib.crossed_above(df["missed1_minima"], df["missed1_short_exit_target"])]
+            qtpylib.crossed_above(df["minima"], df["short_exit_target"])]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
-            ] = (1, "missed1_minima")
-
-        # Short Exit (missed2)
-        conditions = [
-            qtpylib.crossed_above(df["missed2_minima"], df["missed2_short_exit_target"])]
-        if conditions:
-            df.loc[
-                reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
-            ] = (1, "missed2_minima")
+            ] = (1, "minima")
 
         return df
 
