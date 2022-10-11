@@ -94,7 +94,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
         filtered_dataframe = dk.normalize_data_from_metadata(filtered_dataframe)
         dk.data_dictionary["prediction_features"] = filtered_dataframe
 
-        self.data_cleaning_predict(dk, filtered_dataframe)
+        self.data_cleaning_predict(dk)
 
         predictions = self.model.predict(dk.data_dictionary["prediction_features"])
         pred_df = DataFrame(predictions, columns=dk.label_list)
