@@ -68,7 +68,7 @@
         "train_period_days": 30,
         "backtest_period_days": 0.1,
         "fit_live_predictions_candles": 250,
-        "identifier": "LitmusMinMaxBroadClassifier",
+        "identifier": "LitmusMinMaxClassifier",
         "feature_parameters": {
             "include_timeframes": [
                 "3m",
@@ -79,8 +79,8 @@
                 "BTC/USDT"
             ],
             "label_period_candles": 8,
-            "include_shifted_candles": 2,
-            "DI_threshold": 1.1,
+            "include_shifted_candles": 3,
+            "DI_threshold": 1.9,
             "weight_factor": 0.7,
             "principal_component_analysis": false,
             "use_SVM_to_remove_outliers": true,
@@ -93,17 +93,10 @@
             "indicator_periods_candles": [10, 20, 50, 100],
             "noise_standard_deviation": 0.06,
             "reverse_train_test_order": false,
-            "use_feature_selection_routine": false,
+            "use_feature_selection_routine": true,
             "feature_selection_params": {
                 "num_features_select": 300,
                 "steps": 2
-            },
-            "use_smart_selection": true,
-            "smart_selection_params": {
-                "n_estimators": 50,
-                "threshold": 0.9,
-                "scoring": "f1_macro",
-                "cv": 3
             },
             "use_smote": false,
             "exclusion_threshold": 0.2,
@@ -114,20 +107,19 @@
             "shuffle": false
         },
         "labeling_parameters": {
-            "min_growth": 0.006
+            "min_growth": 0.01,
+            "segment_min_growth": 0.01
         },
         "model_training_parameters": {
             "n_estimators": 2000, "loss_function": "MultiClass", "metric_period": 10,
-            "early_stopping_rounds": 100, "task_type": "CPU", "verbose": 10
+            "early_stopping_rounds": 100, "task_type": "CPU", "verbose": 2
         },
         "extra_returns_per_train": {
             "time_to_train": 0,
             "num_trees_&target": 0,
+            "num_trees_&segments": 0,
             "num_features_excluded_&target": 0,
-            "max_f1_maxima": 0,
-            "max_f1_minima": 0,
-            "max_f1_threshold_maxima": 0,
-            "max_f1_threshold_minima": 0
+            "num_features_excluded_&segment": 0
         }
     },
     "telegram": {
