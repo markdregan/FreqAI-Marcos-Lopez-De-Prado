@@ -27,8 +27,16 @@
             "rateLimit": 200
         },
         "pair_whitelist": [
-	        "1INCH/USDT",
-            "AAVE/USDT"
+            "BCH/USDT",
+            "BNB/USDT",
+            "CRV/USDT",
+            "DOGE/USDT",
+            "ETC/USDT",
+            "FIL/USDT",
+            "LTC/USDT",
+            "OMG/USDT",
+            "SNX/USDT",
+            "RUNE/USDT"
         ],
         "pair_blacklist": []
     },
@@ -66,7 +74,7 @@
         "enabled": true,
         "purge_old_models": true,
         "train_period_days": 30,
-        "backtest_period_days": 0.1,
+        "backtest_period_days": 0.5,
         "fit_live_predictions_candles": 250,
         "identifier": "LitmusMinMaxBroadClassifier",
         "feature_parameters": {
@@ -86,48 +94,90 @@
             "use_SVM_to_remove_outliers": true,
             "svm_params": {
                 "shuffle": false,
-                "nu": 0.05},
+                "nu": 0.05
+            },
             "inlier_metric_window": 20,
             "stratify_training_data": 0,
             "indicator_max_period_candles": 200,
             "indicator_periods_candles": [10, 20, 50, 100],
-            "noise_standard_deviation": 0.06,
+            "noise_standard_deviation": 0.05,
             "reverse_train_test_order": false,
-            "use_feature_selection_routine": false,
-            "feature_selection_params": {
-                "num_features_select": 300,
-                "steps": 2
+            "use_psi_elimination": false,
+            "psi_elimination_params": {
+                "split_frac": 0.5,
+                "threshold": 1.5
             },
-            "use_smart_selection": true,
+            "use_greedy_selection": true,
+            "greedy_selection_params": {
+                "threshold": 0.95
+            },
+            "use_smart_selection": false,
             "smart_selection_params": {
-                "n_estimators": 50,
-                "threshold": 0.9,
+                "n_estimators": 1000,
+                "threshold": 0.90,
                 "scoring": "f1_macro",
                 "cv": 3
             },
-            "use_smote": false,
-            "exclusion_threshold": 0.2,
-            "fixed_leverage": 2.0
+            "use_feature_elimination": false,
+            "feature_elimination_params": {
+                "n_estimators": 1000,
+                "scoring": "f1_macro",
+                "cv": 3,
+                "threshold": 0.0
+            },
+            "use_catboost_feature_selection": true,
+            "catboost_feature_selection_params": {
+                "num_features_select": 200,
+                "steps": 3
+            }
+        },
+        "optuna_parameters": {
+            "use_optuna": false,
+            "optuna_refresh": "6:00:00"
         },
         "data_split_parameters": {
             "test_size": 0.6,
             "shuffle": false
         },
         "labeling_parameters": {
-            "min_growth": 0.006
+            "labeling_strategy": "extrema",
+            "zigzag_min_growth": 0.01,
+            "extrema_order": 30,
+            "nearby_threshold": 0.002,
+            "forward_pass": true,
+            "reverse_pass": false,
+            "drop_uncertain_labels": false
+        },
+        "trigger_parameters": {
+            "trigger_type": "F_Optimal",
+            "entry_mul": 1,
+            "exit_mul": 1,
+            "smoothing_window": 30
         },
         "model_training_parameters": {
-            "n_estimators": 2000, "loss_function": "MultiClass", "metric_period": 10,
-            "early_stopping_rounds": 100, "task_type": "CPU", "verbose": 10
+            "n_estimators": 3000,
+            "loss_function": "MultiClassOneVsAll",
+            "early_stopping_rounds": 200,
+            "task_type": "CPU",
+            "verbose": 20,
+            "allow_writing_files": false
         },
         "extra_returns_per_train": {
-            "time_to_train": 0,
+            "total_time": 0,
             "num_trees_&target": 0,
-            "num_features_excluded_&target": 0,
-            "max_f1_maxima": 0,
-            "max_f1_minima": 0,
-            "max_f1_threshold_maxima": 0,
-            "max_f1_threshold_minima": 0
+            "max_f1_b1_maxima": 0,
+            "max_f1_b1_minima": 0,
+            "max_f1_b1_thresh_maxima": 0,
+            "max_f1_b1_thresh_minima": 0,
+            "max_f1_b05_maxima": 0,
+            "max_f1_b05_minima": 0,
+            "max_f1_b05_thresh_maxima": 0,
+            "max_f1_b05_thresh_minima": 0,
+            "num_dropped_psi": 0,
+            "num_dropped_corr": 0,
+            "num_dropped_model": 0,
+            "num_dropped_greedy": 0,
+            "num_features_train": 0
         }
     },
     "telegram": {

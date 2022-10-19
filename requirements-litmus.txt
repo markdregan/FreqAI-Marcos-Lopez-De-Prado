@@ -2,3 +2,4 @@ imbalanced-learn
 zigzag
 pangres
 feature_engine
+optuna

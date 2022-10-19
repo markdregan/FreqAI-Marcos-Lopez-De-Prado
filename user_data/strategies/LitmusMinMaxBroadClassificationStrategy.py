@@ -1,8 +1,12 @@
 from datetime import datetime
-from freqtrade.persistence import Trade
+
+import numpy as np
+from feature_engine.creation import CyclicalFeatures
 from freqtrade.strategy import IStrategy, merge_informative_pair
 from functools import reduce
+from freqtrade.litmus.label_helpers import nearby_extremes
 from pandas import DataFrame
+from scipy.signal import argrelextrema
 from technical import qtpylib
 from typing import Optional
 
@@ -43,16 +47,25 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
                 "minima": {"color": "Salmon"},
                 "short_exit_target": {"color": "Crimson"},
             },
-            "ML": {
-                "max_f1_maxima": {"color": "#bc77a8"},
-                "max_f1_minima": {"color": "#bc9849"},
+            "Max F1": {
+                "max_f1_b1_maxima": {"color": "PaleGreen"},
+                "max_f1_b1_minima": {"color": "Salmon"},
+                "max_f1_b05_maxima": {"color": "ForestGreen"},
+                "max_f1_b05_minima": {"color": "Crimson"},
             },
             "Labels": {
-                "real_peaks": {"color": "#700CBC"},
+                "raw_peaks": {"color": "#a47ebc"},
+                "nearby_peaks": {"color": "#700CBC"},
             },
             "Other": {
-                "num_features_dropped_&target": {"color": "Yellow"},
+                "total_time": {"color": "Pink"},
                 "num_trees_&target": {"color": "Orange"}
+            },
+            "Dropped": {
+                "num_dropped_model": {"color": "#51f6ff"},
+                "num_dropped_corr": {"color": "#52ff9d"},
+                "num_dropped_psi": {"color": "#95a0ff"},
+                "num_dropped_greedy": {"color": "#ffd887"}
             },
         },
     }
@@ -164,20 +177,45 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
         if set_generalized_indicators:
             df["%-day_of_week"] = df["date"].dt.dayofweek
             df["%-hour_of_day"] = df["date"].dt.hour
+            cyclical_transform = CyclicalFeatures(
+                variables=["%-day_of_week", "%-hour_of_day"], max_values=None, drop_original=True
+            )
+            df = cyclical_transform.fit_transform(df)
 
-            # Zigzag min/max for pivot positions
-            min_growth = self.freqai_info["labeling_parameters"].get(
-                "min_growth", -1)
-            peaks = zigzag.peak_valley_pivots(
-                df["close"].values, min_growth, -min_growth)
+            labeling_strategy = self.freqai_info["labeling_parameters"].get("labeling_strategy", "")
+            if labeling_strategy == "zigzag":
+                # Zigzag min/max for pivot positions
+                logger.info("Starting zigzag labeling method")
+                min_growth = self.freqai_info["labeling_parameters"].get(
+                    "zigzag_min_growth", -1)
+                peaks = zigzag.peak_valley_pivots(
+                    df["close"].values, min_growth, -min_growth)
+
+                peaks[0] = 0  # Set first value of peaks = 0
+                peaks[-1] = 0  # Set last value of peaks = 0
+
+            elif labeling_strategy == "extrema":
+                # Scipy argrelextrema method
+                logger.info("Starting argrelextrema labeling method")
+                extrema_order = self.freqai_info["labeling_parameters"].get("extrema_order", 1)
+                maxima_idx = argrelextrema(df["close"].values, np.greater, order=extrema_order)
+                minima_idx = argrelextrema(df["close"].values, np.less, order=extrema_order)
+
+                peaks = np.zeros_like(df["close"].values)
+                peaks[maxima_idx] = 1
+                peaks[minima_idx] = -1
 
             name_map = {0: "not_minmax", 1: "maxima", -1: "minima"}
 
-            peaks[0] = 0  # Set first value of peaks = 0
-            peaks[-1] = 0  # Set last value of peaks = 0
-
-            df["&target"] = peaks
-            df["&target"] = df["&target"].map(name_map)
+            # Smear label to values nearby within threshold
+            df["raw_peaks"] = peaks
+            nearby_threshold = self.freqai_info["labeling_parameters"]["nearby_threshold"]
+            df["nearby_peaks"] = nearby_extremes(
+                df[["close", "raw_peaks"]],
+                threshold=nearby_threshold,
+                forward_pass=self.freqai_info["labeling_parameters"]["forward_pass"],
+                reverse_pass=self.freqai_info["labeling_parameters"]["reverse_pass"])
+            df["&target"] = df["nearby_peaks"].map(name_map)
 
             df["real_peaks"] = peaks
 
@@ -189,24 +227,69 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
 
         dataframe = self.freqai.start(dataframe, metadata, self)
 
-        enter_mul = 3
-        exit_mul = 2
+        entry_mul = self.freqai_info["trigger_parameters"]["entry_mul"]
+        exit_mul = self.freqai_info["trigger_parameters"]["exit_mul"]
 
-        # Long entry
-        dataframe["long_entry_target"] = (
-            dataframe["minima_mean"] + dataframe["minima_std"] * enter_mul)
+        trigger_type = self.freqai_info["trigger_parameters"].get("trigger_type", "Std")
 
-        # Long exit
-        dataframe["long_exit_target"] = (
-            dataframe["maxima_mean"] + dataframe["maxima_std"] * exit_mul)
+        if trigger_type == "Std":
+            # Long entry
+            dataframe["long_entry_target"] = (
+                dataframe["minima_mean"] + dataframe["minima_std"] * entry_mul
+            )
 
-        # Short entry
-        dataframe["short_entry_target"] = (
-                dataframe["maxima_mean"] + dataframe["maxima_std"] * enter_mul)
+            # Long exit
+            dataframe["long_exit_target"] = (
+                dataframe["maxima_mean"] + dataframe["maxima_std"] * exit_mul
+            )
 
-        # Short exit
-        dataframe["short_exit_target"] = (
-                dataframe["minima_mean"] + dataframe["minima_std"] * exit_mul)
+            # Short entry
+            dataframe["short_entry_target"] = (
+                    dataframe["maxima_mean"] + dataframe["maxima_std"] * entry_mul
+            )
+
+            # Short exit
+            dataframe["short_exit_target"] = (
+                    dataframe["minima_mean"] + dataframe["minima_std"] * exit_mul
+            )
+
+        elif trigger_type == "F_Optimal":
+
+            smoothing_win = self.freqai_info["trigger_parameters"].get("smoothing_window", 1)
+
+            # Long entry
+            dataframe["long_entry_target"] = (
+                    dataframe["max_f1_b05_thresh_minima"].rolling(smoothing_win).mean() * entry_mul
+            )
+
+            # Long exit
+            dataframe["long_exit_target"] = (
+                    dataframe["max_f1_b1_thresh_maxima"].rolling(smoothing_win).mean() * exit_mul
+            )
+
+            # Short entry
+            dataframe["short_entry_target"] = (
+                    dataframe["max_f1_b05_thresh_maxima"].rolling(smoothing_win).mean() * entry_mul
+            )
+
+            # Short exit
+            dataframe["short_exit_target"] = (
+                    dataframe["max_f1_b1_thresh_minima"].rolling(smoothing_win).mean() * exit_mul
+            )
+
+        elif trigger_type == "disabled":
+
+            # Long entry
+            dataframe["long_entry_target"] = 0
+
+            # Long exit
+            dataframe["long_exit_target"] = 0
+
+            # Short entry
+            dataframe["short_entry_target"] = 0
+
+            # Short exit
+            dataframe["short_exit_target"] = 0
 
         return dataframe
 
@@ -279,7 +362,7 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
                             time_in_force: str, current_time: datetime, entry_tag: Optional[str],
                             side: str, **kwargs) -> bool:
 
-        open_trades = Trade.get_trades(trade_filter=Trade.is_open.is_(True))
+        """open_trades = Trade.get_trades(trade_filter=Trade.is_open.is_(True))
 
         # Balance longs vs shorts to help protect against black swan event
         max_open_trades = self.config.get("max_open_trades", 0)
@@ -295,7 +378,7 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
                 return False
 
             if side == "short" and num_shorts >= max_open_trades / 2.0:
-                return False
+                return False"""
 
         # Prevent taking trades that have already moved too far in predicted direction
         df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
@@ -303,9 +386,11 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
 
         if side == "long":
             if rate > (last_candle["close"] * (1 + 0.0025)):
+                logger.info(f"Trade entry blocked (long) for {pair}")
                 return False
         else:
             if rate < (last_candle["close"] * (1 - 0.0025)):
+                logger.info(f"Trade entry blocked (short) for {pair}")
                 return False
 
         return True
