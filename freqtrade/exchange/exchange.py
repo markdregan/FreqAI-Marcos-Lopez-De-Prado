@@ -410,11 +410,13 @@ class Exchange:
         else:
             return DataFrame()
 
-    def get_contract_size(self, pair: str) -> float:
+    def get_contract_size(self, pair: str) -> Optional[float]:
         if self.trading_mode == TradingMode.FUTURES:
-            market = self.markets[pair]
+            market = self.markets.get(pair, {})
             contract_size: float = 1.0
-            if market['contractSize'] is not None:
+            if not market:
+                return None
+            if market.get('contractSize') is not None:
                 # ccxt has contractSize in markets as string
                 contract_size = float(market['contractSize'])
             return contract_size
@@ -1427,6 +1429,8 @@ class Exchange:
         :return: fetch_tickers result
         """
         tickers: Tickers
+        if not self.exchange_has('fetchTickers'):
+            return {}
         if cached:
             with self._cache_lock:
                 tickers = self._fetch_tickers_cache.get('fetch_tickers')  # type: ignore
@@ -1932,6 +1936,7 @@ class Exchange:
                 candle_limit = self.ohlcv_candle_limit(timeframe, self._config['candle_type_def'])
                 # Age out old candles
                 ohlcv_df = ohlcv_df.tail(candle_limit + self._startup_candle_count)
+                ohlcv_df = ohlcv_df.reset_index(drop=True)
                 self._klines[(pair, timeframe, c_type)] = ohlcv_df
             else:
                 self._klines[(pair, timeframe, c_type)] = ohlcv_df
@@ -1991,9 +1996,9 @@ class Exchange:
         # Timeframe in seconds
         interval_in_sec = timeframe_to_seconds(timeframe)
 
-        return not (
+        return (
             (self._pairs_last_refresh_time.get((pair, timeframe, candle_type), 0)
-             + interval_in_sec) >= arrow.utcnow().int_timestamp
+             + interval_in_sec) <= arrow.utcnow().int_timestamp
         )
 
     @retrier_async
