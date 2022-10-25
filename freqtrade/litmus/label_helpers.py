@@ -57,6 +57,7 @@ def nearby_extremes(df, threshold: float, forward_pass: bool, reverse_pass: bool
     """Identify values beside peaks/valleys that are within a
     threshold distance and re-label them"""
 
+    df.rename(columns={df.columns[1]: "raw_peaks"}, inplace=True)
     df_holder = []
     df_holder.append(df["raw_peaks"])
 

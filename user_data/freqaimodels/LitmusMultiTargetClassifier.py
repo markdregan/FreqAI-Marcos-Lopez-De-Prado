@@ -132,36 +132,13 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             y_test = data_dictionary["train_labels"][t]
             weight_test = data_dictionary["train_weights"]
 
-            # Drop labels we are uncertain about their validity
-            if self.freqai_info["labeling_parameters"].get("drop_uncertain_labels", False):
-                # X_train: Drop samples after last detected min / max
-                # (because labels are not known for sure after)
-                last_row_idx = y_train.last_valid_index()
-                reduced_last_row_idx = y_train[y_train != "not_minmax"].last_valid_index()
-                X_train = X_train.loc[:reduced_last_row_idx, :]  # Pandas DataFrame
-                y_train = y_train.loc[:reduced_last_row_idx]  # Pandas Series
-                rows_dropped = last_row_idx - reduced_last_row_idx
-                weight_train = weight_train[:len(weight_train) - rows_dropped]  # Numpy array
-                logger.info(f"Dropping {rows_dropped} rows from train after last known min/max.")
-
-                # X_test: Drop samples before first detected min / max
-                # (because labels are not known for sure before)
-                first_row_idx = y_test.first_valid_index()
-                reduced_first_row_idx = y_test[y_test != "not_minmax"].first_valid_index()
-                X_test = X_test.loc[reduced_first_row_idx:, :]  # Pandas DataFrame
-                y_test = y_test.loc[reduced_first_row_idx:]  # Pandas Series
-                rows_dropped = reduced_first_row_idx - first_row_idx
-                weight_test = weight_test[rows_dropped:]  # Numpy array
-                logger.info(f"Dropping {rows_dropped} rows from test before first known min/max.")
-
             # Drop High PSI Features
-            if self.freqai_info["feature_parameters"].get("use_psi_elimination", False):
+            if self.freqai_info["feature_selection"]["psi_elimination"].get("enabled", False):
                 num_feat = len(X_train.columns)
                 logger.info(f"Starting PSI Feature Elimination for {num_feat} features")
 
                 # Get config params
-                psi_elimination_params = self.freqai_info['feature_parameters'].get(
-                    "psi_elimination_params", 0)
+                psi_elimination_params = self.freqai_info["feature_selection"]["psi_elimination"]
 
                 psi_elimination = DropHighPSIFeatures(
                     split_col=None, split_frac=psi_elimination_params["split_frac"],
@@ -175,17 +152,16 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
 
                 num_remaining = len(X_train.columns)
                 num_dropped = len(psi_elimination.features_to_drop_)
-                dk.data["extra_returns_per_train"]["num_dropped_psi"] = num_dropped
+                dk.data["extra_returns_per_train"][f"num_dropped_psi_{t}"] = num_dropped
                 logger.info(f"Dropping {num_dropped} high psi features. {num_remaining} remaining.")
 
             # Drop features using Greedy Correlated Selection
-            if self.freqai_info["feature_parameters"].get("use_greedy_selection", False):
+            if self.freqai_info["feature_selection"]["greedy_selection"].get("enabled", False):
                 num_feat = len(X_train.columns)
                 logger.info(f"Starting Greedy Feature Selection for {num_feat} features")
 
                 # Get config params
-                greedy_selection_params = self.freqai_info['feature_parameters'].get(
-                    "greedy_selection_params", 0)
+                greedy_selection_params = self.freqai_info["feature_selection"]["greedy_selection"]
 
                 greedy_selection = DropCorrelatedFeatures(
                     variables=None, method="pearson",
@@ -197,18 +173,17 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
 
                 num_remaining = len(X_train.columns)
                 num_dropped = len(greedy_selection.features_to_drop_)
-                dk.data["extra_returns_per_train"]["num_dropped_greedy"] = num_dropped
+                dk.data["extra_returns_per_train"][f"num_dropped_greedy_{t}"] = num_dropped
                 logger.info(f"Dropping {num_dropped} correlated features using greedy. "
                             f"{num_remaining} remaining.")
 
             # Drop features using Smart Correlated Selection
-            if self.freqai_info["feature_parameters"].get("use_smart_selection", False):
+            if self.freqai_info["feature_selection"]["smart_selection"].get("enabled", False):
                 num_feat = len(X_train.columns)
                 logger.info(f"Starting Smart Feature Selection for {num_feat} features")
 
                 # Get config params
-                smart_selection_params = self.freqai_info['feature_parameters'].get(
-                    "smart_selection_params", 0)
+                smart_selection_params = self.freqai_info["feature_selection"]["smart_selection"]
 
                 scs_estimator = RandomForestClassifier(
                     n_estimators=smart_selection_params["n_estimators"], n_jobs=4)
@@ -225,18 +200,18 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
 
                 num_remaining = len(X_train.columns)
                 num_dropped = len(smart_selection.features_to_drop_)
-                dk.data["extra_returns_per_train"]["num_dropped_corr"] = num_dropped
+                dk.data["extra_returns_per_train"][f"num_dropped_corr_{t}"] = num_dropped
                 logger.info(f"Dropping {num_dropped} correlated features. "
                             f"{num_remaining} remaining.")
 
-            # Feature elimination using model performance
-            if self.freqai_info["feature_parameters"].get("use_feature_elimination", False):
+            # Recursive feature addition
+            if self.freqai_info["feature_selection"]["recursive_addition"].get(
+                    "enabled", False):
                 num_feat = len(X_train.columns)
-                logger.info(f"Starting Feature Elimination Process for {num_feat} features")
+                logger.info(f"Starting RFA Process for {num_feat} features")
 
                 # Get config params
-                elimination_params = self.freqai_info['feature_parameters'].get(
-                    "feature_elimination_params", 0)
+                elimination_params = self.freqai_info["feature_selection"]["recursive_addition"]
 
                 sbs_estimator = RandomForestClassifier(
                     n_estimators=elimination_params["n_estimators"], n_jobs=4)
@@ -251,7 +226,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
 
                 num_remaining = len(X_train.columns)
                 num_dropped = len(feature_elimination.features_to_drop_)
-                dk.data["extra_returns_per_train"]["num_dropped_model"] = num_dropped
+                dk.data["extra_returns_per_train"][f"num_dropped_model_{t}"] = num_dropped
                 logger.info(f"Dropping {num_dropped} features with poor performance. "
                             f"{num_remaining} remaining.")
 
@@ -272,22 +247,21 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             )
 
             # Feature reduction using catboost routine
-            if self.freqai_info["feature_parameters"].get("use_catboost_feature_selection", False):
+            if self.freqai_info["feature_selection"]["catboost_selection"].get("enabled", False):
                 num_feat = len(X_train.columns)
                 logger.info(f"Starting Catboost Feature Selection for {num_feat} features")
 
                 # Get config params for feature selection
-                feature_selection_params = self.freqai_info['feature_parameters'].get(
-                    "catboost_feature_selection_params", 0)
+                selection_params = self.freqai_info["feature_selection"]["catboost_selection"]
 
                 # Run feature selection
                 all_feature_names = np.arange(len(X_train.columns))
                 summary = model.select_features(
                     X=train_data, eval_set=eval_data,
-                    num_features_to_select=feature_selection_params["num_features_select"],
-                    features_for_select=all_feature_names, steps=feature_selection_params["steps"],
+                    num_features_to_select=selection_params["num_features_select"],
+                    features_for_select=all_feature_names, steps=selection_params["steps"],
                     algorithm=EFeaturesSelectionAlgorithm.RecursiveByLossFunctionChange,
-                    shap_calc_type=EShapCalcType.Approximate, train_final_model=False, verbose=True)
+                    shap_calc_type=EShapCalcType.Approximate, train_final_model=False)
 
                 selected_features_names = summary["selected_features_names"]
 
@@ -303,7 +277,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 )
 
             # Hyper parameter optimization
-            if self.freqai_info["optuna_parameters"].get("use_optuna", False):
+            if self.freqai_info["optuna_parameters"].get("enabled", False):
                 logger.info("Starting optuna hyper parameter optimization routine")
 
                 def objective(trial: optuna.Trial) -> float:
@@ -330,7 +304,10 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
 
                     pruning_callback = CatBoostPruningCallback(trial, "MultiClassOneVsAll")
                     optuna_model.fit(
-                        X=train_data, eval_set=eval_data, verbose=0, callbacks=[pruning_callback])
+                        X=train_data,
+                        eval_set=eval_data,
+                        verbose=0,
+                        callbacks=[pruning_callback])
 
                     # evoke pruning manually.
                     pruning_callback.check_pruned()
@@ -374,6 +351,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 logger.info(f"Optuna found best params for {t} {dk.pair}: {best_params}")
                 model.set_params(**best_params)
 
+            # Train final model
             init_model = self.get_init_model(dk.pair)
             model.fit(X=train_data, eval_set=eval_data, init_model=init_model)
 
@@ -416,16 +394,25 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 # Max F1 Score and Optimum threshold
                 precision, recall, thresholds = precision_recall_curve(
                     y_test_enc[:, i], y_pred_proba[:, i])
-                max_f1_b1, max_f1_b1_thresh = optimum_f1(precision, recall, thresholds, beta=1)
-                max_f1_b05, max_f1_b05_thresh = optimum_f1(precision, recall, thresholds, beta=0.5)
-                dk.data["extra_returns_per_train"][f"max_f1_b1_{c}"] = max_f1_b1
-                dk.data["extra_returns_per_train"][f"max_f1_b1_thresh_{c}"] = max_f1_b1_thresh
-                dk.data["extra_returns_per_train"][f"max_f1_b05_{c}"] = max_f1_b05
-                dk.data["extra_returns_per_train"][f"max_f1_b05_thresh_{c}"] = max_f1_b05_thresh
-                logger.info(f"{c} - Max F1 Beta 1 score: {max_f1_b1}")
-                logger.info(f"{c} - Optimum Threshold Max F1 Beta 1 score: {max_f1_b1_thresh}")
-                logger.info(f"{c} - Max F1 Beta 0.5 score: {max_f1_b05}")
-                logger.info(f"{c} - Optimum Threshold Max F1 Beta 0.5 score: {max_f1_b05_thresh}")
+
+                fbeta_entry = self.freqai_info["trigger_parameters"].get("fbeta_entry", 1)
+                fbeta_exit = self.freqai_info["trigger_parameters"].get("fbeta_exit", 1)
+
+                max_fbeta_entry, fbeta_entry_thresh = optimum_f1(
+                    precision, recall, thresholds, beta=fbeta_entry)
+                max_fbeta_exit, fbeta_exit_thresh = optimum_f1(
+                    precision, recall, thresholds, beta=fbeta_exit)
+
+                dk.data["extra_returns_per_train"][f"max_fbeta_entry_{c}_{t}"] = max_fbeta_entry
+                dk.data["extra_returns_per_train"][f"max_fbeta_exit_{c}_{t}"] = max_fbeta_exit
+                dk.data["extra_returns_per_train"][f"fbeta_entry_thresh_{c}_{t}"] = \
+                    fbeta_entry_thresh
+                dk.data["extra_returns_per_train"][f"fbeta_exit_thresh_{c}_{t}"] = fbeta_exit_thresh
+
+                logger.info(f"{c} - Max FBeta exit score: {max_fbeta_exit}")
+                logger.info(f"{c} - Max FBeta entry score: {max_fbeta_entry}")
+                logger.info(f"{c} - Optimum Threshold FBeta exit score: {fbeta_exit_thresh}")
+                logger.info(f"{c} - Optimum Threshold FBeta entry score: {fbeta_entry_thresh}")
 
             models.append(model)
 

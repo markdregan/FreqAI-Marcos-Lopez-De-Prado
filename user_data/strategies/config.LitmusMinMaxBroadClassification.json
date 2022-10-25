@@ -1,14 +1,14 @@
 {
     "trading_mode": "futures",
     "margin_mode": "isolated",
-    "max_open_trades": 10,
+    "max_open_trades": 5,
     "stake_currency": "USDT",
     "stake_amount": "unlimited",
     "tradable_balance_ratio": 1,
     "fiat_display_currency": "USD",
     "dry_run": true,
     "timeframe": "3m",
-    "dry_run_wallet": 50000,
+    "dry_run_wallet": 10000,
     "process_only_new_candles": true,
     "cancel_open_orders_on_exit": true,
     "unfilledtimeout": {
@@ -27,16 +27,7 @@
             "rateLimit": 200
         },
         "pair_whitelist": [
-            "BCH/USDT",
-            "BNB/USDT",
-            "CRV/USDT",
-            "DOGE/USDT",
-            "ETC/USDT",
-            "FIL/USDT",
-            "LTC/USDT",
-            "OMG/USDT",
-            "SNX/USDT",
-            "RUNE/USDT"
+            "AAVE/USDT"
         ],
         "pair_blacklist": []
     },
@@ -73,9 +64,9 @@
     "freqai": {
         "enabled": true,
         "purge_old_models": true,
-        "train_period_days": 30,
+        "train_period_days": 60,
         "backtest_period_days": 0.5,
-        "fit_live_predictions_candles": 250,
+        "fit_live_predictions_candles": 0,
         "identifier": "LitmusMinMaxBroadClassifier",
         "feature_parameters": {
             "include_timeframes": [
@@ -88,7 +79,7 @@
             ],
             "label_period_candles": 8,
             "include_shifted_candles": 2,
-            "DI_threshold": 1.1,
+            "DI_threshold": 0.9,
             "weight_factor": 0.7,
             "principal_component_analysis": false,
             "use_SVM_to_remove_outliers": true,
@@ -96,43 +87,46 @@
                 "shuffle": false,
                 "nu": 0.05
             },
+            "use_DBSCAN_to_remove_outliers": true,
             "inlier_metric_window": 20,
             "stratify_training_data": 0,
             "indicator_max_period_candles": 200,
             "indicator_periods_candles": [10, 20, 50, 100],
             "noise_standard_deviation": 0.05,
-            "reverse_train_test_order": false,
-            "use_psi_elimination": false,
-            "psi_elimination_params": {
+            "reverse_train_test_order": false
+        },
+        "feature_selection": {
+            "psi_elimination": {
+                "enabled": false,
                 "split_frac": 0.5,
                 "threshold": 1.5
             },
-            "use_greedy_selection": true,
-            "greedy_selection_params": {
-                "threshold": 0.95
+            "greedy_selection": {
+                "enabled": true,
+                "threshold": 0.92
             },
-            "use_smart_selection": false,
-            "smart_selection_params": {
+            "smart_selection": {
+                "enabled": false,
                 "n_estimators": 1000,
                 "threshold": 0.90,
                 "scoring": "f1_macro",
                 "cv": 3
             },
-            "use_feature_elimination": false,
-            "feature_elimination_params": {
+            "recursive_addition": {
+                "enabled": false,
                 "n_estimators": 1000,
                 "scoring": "f1_macro",
                 "cv": 3,
                 "threshold": 0.0
             },
-            "use_catboost_feature_selection": true,
-            "catboost_feature_selection_params": {
+            "catboost_selection": {
+                "enabled": false,
                 "num_features_select": 200,
                 "steps": 3
             }
         },
         "optuna_parameters": {
-            "use_optuna": false,
+            "enabled": false,
             "optuna_refresh": "6:00:00"
         },
         "data_split_parameters": {
@@ -140,18 +134,15 @@
             "shuffle": false
         },
         "labeling_parameters": {
-            "labeling_strategy": "extrema",
-            "zigzag_min_growth": 0.01,
-            "extrema_order": 30,
-            "nearby_threshold": 0.002,
-            "forward_pass": true,
-            "reverse_pass": false,
-            "drop_uncertain_labels": false
+            "zigzag_min_growth": [0.01, 0.005, 0.005],
+            "nearby_threshold": [0.003, 0.002, 0],
+            "forward_pass": [true, true, false],
+            "reverse_pass": [false, false, false],
+            "target_offset": [0, 0, 3]
         },
         "trigger_parameters": {
-            "trigger_type": "F_Optimal",
-            "entry_mul": 1,
-            "exit_mul": 1,
+            "fbeta_entry": 0.5,
+            "fbeta_exit": 1,
             "smoothing_window": 30
         },
         "model_training_parameters": {
@@ -159,25 +150,29 @@
             "loss_function": "MultiClassOneVsAll",
             "early_stopping_rounds": 200,
             "task_type": "CPU",
-            "verbose": 20,
+            "verbose": 50,
             "allow_writing_files": false
         },
         "extra_returns_per_train": {
             "total_time": 0,
-            "num_trees_&target": 0,
-            "max_f1_b1_maxima": 0,
-            "max_f1_b1_minima": 0,
-            "max_f1_b1_thresh_maxima": 0,
-            "max_f1_b1_thresh_minima": 0,
-            "max_f1_b05_maxima": 0,
-            "max_f1_b05_minima": 0,
-            "max_f1_b05_thresh_maxima": 0,
-            "max_f1_b05_thresh_minima": 0,
-            "num_dropped_psi": 0,
-            "num_dropped_corr": 0,
-            "num_dropped_model": 0,
-            "num_dropped_greedy": 0,
-            "num_features_train": 0
+            "num_trees_&target_0": 0,
+            "num_trees_&target_1": 0,
+            "max_fbeta_entry_maxima_0_&target_0": 0,
+            "max_fbeta_exit_maxima_0_&target_0": 0,
+            "max_fbeta_entry_minima_0_&target_0": 0,
+            "max_fbeta_exit_minima_0_&target_0": 0,
+            "max_fbeta_entry_maxima_1_&target_1": 0,
+            "max_fbeta_exit_maxima_1_&target_1": 0,
+            "max_fbeta_entry_minima_1_&target_1": 0,
+            "max_fbeta_exit_minima_1_&target_1": 0,
+            "fbeta_exit_thresh_maxima_0_&target_0": 0,
+            "fbeta_entry_thresh_maxima_0_&target_0": 0,
+            "fbeta_exit_thresh_minima_0_&target_0": 0,
+            "fbeta_entry_thresh_minima_0_&target_0": 0,
+            "fbeta_exit_thresh_maxima_1_&target_1": 0,
+            "fbeta_entry_thresh_maxima_1_&target_1": 0,
+            "fbeta_exit_thresh_minima_1_&target_1": 0,
+            "fbeta_entry_thresh_minima_1_&target_1": 0
         }
     },
     "telegram": {
@@ -203,3 +198,5 @@
         "process_throttle_secs": 5
     }
 }
+
+
