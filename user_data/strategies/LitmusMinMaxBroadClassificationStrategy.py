@@ -1,14 +1,17 @@
 from datetime import datetime
 
 from feature_engine.creation import CyclicalFeatures
+from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy, merge_informative_pair
 from functools import reduce
 from freqtrade.litmus.label_helpers import nearby_extremes
 from pandas import DataFrame
+from scipy.stats import zscore
 from technical import qtpylib
 from typing import Optional
 
 import logging
+import numpy as np
 import pandas as pd
 import talib.abstract as ta
 import zigzag
@@ -32,6 +35,7 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
             "do_predict": {
                 "do_predict": {"color": "brown"},
                 "DI_values": {"color": "grey"},
+                "DI_no_outlier_detected": {"color": "#1e5780"},
             },
             "Long": {
                 "minima_0": {"color": "PaleGreen"},
@@ -44,6 +48,10 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
                 "short_entry_target": {"color": "ForestGreen"},
                 "minima_1": {"color": "Salmon"},
                 "short_exit_target": {"color": "Crimson"},
+            },
+            "Regret": {
+                "minima_2": {"color": "PaleGreen"},
+                "maxima_2": {"color": "Salmon"},
             },
             "F1": {
                 "max_fbeta_entry_maxima_0_&target_0": {"color": "Salmon"},
@@ -61,16 +69,17 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
                 "total_time": {"color": "Pink"},
                 "num_trees_&target_0": {"color": "Orange"},
                 "num_trees_&target_1": {"color": "#65ceff"},
+                "%%-compare-BTC-log-returns-zscore_3m": {"color": "#86ffa8"},
             },
         },
     }
 
     # Stop loss config
-    stoploss = -0.01
+    stoploss = -0.02
     trailing_stop = True
-    trailing_stop_positive_offset = 0.01
-    trailing_stop_positive = 0.005
-    trailing_only_offset_is_reached = True
+    """trailing_stop_positive_offset = 0.02
+    trailing_stop_positive = 0.015
+    trailing_only_offset_is_reached = True"""
 
     process_only_new_candles = True
     use_exit_signal = True
@@ -141,11 +150,29 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
                 informative["close"] / informative[f"{coin}-bb_lowerband-period_{t}"]
             )
 
-            informative[f"%%-{coin}-roc-period_{t}"] = ta.ROC(informative, timeperiod=t)
+            informative[f"%-{coin}-roc-period_{t}"] = ta.ROC(informative, timeperiod=t)
 
             informative[f"%-{coin}-relative_volume-period_{t}"] = (
                 informative["volume"] / informative["volume"].rolling(t).mean()
             )
+
+            # Absolute Price Oscillator
+            informative[f"%-{coin}-apo-period_{t}"] = ta.APO(
+                informative["close"], fastperiod=int(t / 2), slowperiod=t, matype=0)
+
+            # PPO (Percentage Price Oscilator)
+            informative[f"%-{coin}-ppo-period_{t}"] = ta.PPO(
+                informative["close"], fastperiod=int(t / 2), slowperiod=t, matype=0)
+
+            # MACD (macd, macdsignal, macdhist)
+            _, _, macdhist = ta.MACD(
+                informative["close"], fastperiod=int(t / 2),
+                slowperiod=t, signalperiod=int(3 * t / 4))
+            informative[f"%-{coin}-macdhist-period_{t}"] = macdhist
+
+            # Average True Range
+            informative[f"%-{coin}-atr-period_{t}"] = ta.ATR(
+                informative["high"], informative["low"], informative["close"], timeperiod=t)
 
         informative[f"%-{coin}-pct-change"] = informative["close"].pct_change()
         informative[f"%-{coin}-raw_volume"] = informative["volume"]
@@ -170,16 +197,15 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
         # function to populate indicators during training). Notice how we ensure not to
         # add them multiple times
         if set_generalized_indicators:
-            df["%-day_of_week"] = df["date"].dt.dayofweek
-            df["%-hour_of_day"] = df["date"].dt.hour
+            df["day_of_week"] = df["date"].dt.dayofweek
+            df["hour_of_day"] = df["date"].dt.hour
             cyclical_transform = CyclicalFeatures(
-                variables=["%-day_of_week", "%-hour_of_day"], max_values=None, drop_original=True
+                variables=["day_of_week", "hour_of_day"], max_values=None, drop_original=True
             )
             df = cyclical_transform.fit_transform(df)
 
+            # Zigzag min/max for pivot positions
             for i, g in enumerate(self.freqai_info["labeling_parameters"]["zigzag_min_growth"]):
-
-                # Zigzag min/max for pivot positions
                 logger.info(f"Starting zigzag labeling method ({i})")
                 min_growth = self.freqai_info["labeling_parameters"]["zigzag_min_growth"][i]
                 peaks = zigzag.peak_valley_pivots(
@@ -205,6 +231,12 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
                 df[f"&target_{i}"] = df[f"nearby_peaks_{i}"].map(name_map)
 
                 df[f"real_peaks_{i}"] = peaks
+
+            # Cointegration features
+            df["%-compare-BTC-log-returns_3m"] = (
+                    np.log(df[f"%-{coin}-raw_price_3m"]) - np.log(df["%-BTC-raw_price_3m"])
+            )
+            df["%%-compare-BTC-log-returns-zscore_3m"] = zscore(df["%-compare-BTC-log-returns_3m"])
 
         return df
 
@@ -236,13 +268,24 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
                 dataframe["fbeta_exit_thresh_minima_1_&target_1"].rolling(smoothing_win).mean()
         )
 
+        # Dissimilarity Index (Rolling Calculation Method)
+        DI_window = self.freqai_info["feature_parameters"].get("DI_window", 100)
+        DI_std_mul = self.freqai_info["feature_parameters"].get("DI_std_mul", 1)
+        dataframe["DI_outliers"] = (
+                dataframe["DI_values"].rolling(DI_window).mean()
+                + dataframe["DI_values"].rolling(DI_window).std() * DI_std_mul
+        )
+        dataframe["DI_no_outlier_detected"] = dataframe["DI_values"] < dataframe["DI_outliers"]
+
         return dataframe
 
     def populate_entry_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
         # Long Entry
         conditions = [
-            qtpylib.crossed_above(df["minima_0"], df["long_entry_target"])]
+            qtpylib.crossed_above(df["minima_0"], df["long_entry_target"]),
+            df["DI_no_outlier_detected"],
+            df["do_predict"] == 1]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
@@ -250,7 +293,9 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
 
         # Short Entry
         conditions = [
-            qtpylib.crossed_above(df["maxima_0"], df["short_entry_target"])]
+            qtpylib.crossed_above(df["maxima_0"], df["short_entry_target"]),
+            df["DI_no_outlier_detected"],
+            df["do_predict"] == 1]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
@@ -260,7 +305,7 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
 
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
 
-        # Long Exit
+        """# Long Exit
         conditions = [
             qtpylib.crossed_above(df["maxima_1"], df["long_exit_target"])]
         if conditions:
@@ -274,7 +319,7 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
-            ] = (1, "minima_exit")
+            ] = (1, "minima_exit")"""
 
         return df
 
@@ -370,19 +415,25 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
 
         return True
 
-    # use_custom_stoploss = True
+    use_custom_stoploss = False
 
-    """def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
+    def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
                         current_rate: float, current_profit: float, **kwargs) -> float:
 
-        if current_profit < 0.005:
-            return -1  # keep using the inital stoploss
+        df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        last_candle = df.iloc[-1].squeeze()
 
-        # After reaching the desired offset, allow the stoploss to trail by half the profit
-        desired_stoploss = current_profit / 2.0
+        # Long Exit
+        if last_candle["maxima_1"] > last_candle["long_exit_target"]:
+            # Tighten stop loss under latest close
+            return 0.02
 
-        # Use a minimum of 2.5% and a maximum of 5%
-        return max(min(desired_stoploss, 0.03), 0.01)"""
+        # Short Exit
+        if last_candle["minima_1"] > last_candle["short_exit_target"]:
+            return 0.02
+
+        # Otherwise keep current stoploss
+        return -1
 
     """def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
                             proposed_stake: float, min_stake: float, max_stake: float,

@@ -358,16 +358,23 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             dk.data["extra_returns_per_train"][f"num_trees_{t}"] = model.tree_count_
 
             # Compute feature importance & save to db
-            feature_imp = model.get_feature_importance(
-                data=eval_data, type=EFstrType.LossFunctionChange, prettified=True)
-            feature_imp.rename(columns={"Feature Id": "feature_id", "Importances": "importance"},
-                               inplace=True)
-            feature_imp["pair"] = dk.pair
-            feature_imp["train_time"] = time()
-            feature_imp["model"] = t
-            feature_imp["rank"] = feature_imp["importance"].rank(method="first", ascending=False)
-            feature_imp.set_index(keys=["model", "train_time", "pair", "feature_id"], inplace=True)
-            save_df_to_db(df=feature_imp, table_name="feature_importance_history")
+            pct_enabled = self.freqai_info["feature_selection"]["feature_importance"].get(
+                "pct_enabled", 0)
+            rand = np.random.random()
+            if rand < pct_enabled:
+                logger.info(f"Feature importance triggered with {rand} < {pct_enabled}")
+                feature_imp = model.get_feature_importance(
+                    data=eval_data, type=EFstrType.LossFunctionChange, prettified=True)
+                feature_imp.rename(
+                    columns={"Feature Id": "feature_id", "Importances": "importance"}, inplace=True)
+                feature_imp["pair"] = dk.pair
+                feature_imp["train_time"] = time()
+                feature_imp["model"] = t
+                feature_imp["rank"] = feature_imp["importance"].rank(
+                    method="first", ascending=False)
+                feature_imp.set_index(
+                    keys=["model", "train_time", "pair", "feature_id"], inplace=True)
+                save_df_to_db(df=feature_imp, table_name="feature_importance_history")
 
             end_time = time()
             total_time = end_time - start_time
@@ -405,8 +412,9 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
 
                 dk.data["extra_returns_per_train"][f"max_fbeta_entry_{c}_{t}"] = max_fbeta_entry
                 dk.data["extra_returns_per_train"][f"max_fbeta_exit_{c}_{t}"] = max_fbeta_exit
-                dk.data["extra_returns_per_train"][f"fbeta_entry_thresh_{c}_{t}"] = \
+                dk.data["extra_returns_per_train"][f"fbeta_entry_thresh_{c}_{t}"] = (
                     fbeta_entry_thresh
+                )
                 dk.data["extra_returns_per_train"][f"fbeta_exit_thresh_{c}_{t}"] = fbeta_exit_thresh
 
                 logger.info(f"{c} - Max FBeta exit score: {max_fbeta_exit}")
