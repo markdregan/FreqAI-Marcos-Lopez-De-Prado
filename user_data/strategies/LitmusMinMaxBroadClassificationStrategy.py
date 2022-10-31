@@ -27,7 +27,10 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
       --freqaimodel LitmusMultiTargetClassifier --verbose
     """
 
-    minimal_roi = {"0": 0.1, "240": -1}
+    minimal_roi = {
+        "0": 1,
+        "240": -1
+    }
 
     plot_config = {
         "main_plot": {},
@@ -48,10 +51,6 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
                 "short_entry_target": {"color": "ForestGreen"},
                 "minima_1": {"color": "Salmon"},
                 "short_exit_target": {"color": "Crimson"},
-            },
-            "Regret": {
-                "minima_2": {"color": "PaleGreen"},
-                "maxima_2": {"color": "Salmon"},
             },
             "F1": {
                 "max_fbeta_entry_maxima_0_&target_0": {"color": "Salmon"},
