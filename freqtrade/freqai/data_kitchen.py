@@ -354,13 +354,19 @@ class FreqaiDataKitchen:
         :param df: Dataframe to be standardized
         """
 
-        for item in df.keys():
-            df[item] = (
-                2
-                * (df[item] - self.data[f"{item}_min"])
-                / (self.data[f"{item}_max"] - self.data[f"{item}_min"])
-                - 1
-            )
+        train_max = [None] * len(df.keys())
+        train_min = [None] * len(df.keys())
+
+        for i, item in enumerate(df.keys()):
+            train_max[i] = self.data[f"{item}_max"]
+            train_min[i] = self.data[f"{item}_min"]
+
+        train_max_series = pd.Series(train_max, index=df.keys())
+        train_min_series = pd.Series(train_min, index=df.keys())
+
+        df = (
+            2 * (df - train_min_series) / (train_max_series - train_min_series) - 1
+        )
 
         return df
 
@@ -960,7 +966,7 @@ class FreqaiDataKitchen:
             append_df[f"{label}_std"] = self.data["labels_std"][label]
 
         for extra_col in self.data["extra_returns_per_train"]:
-            append_df["{extra_col}"] = self.data["extra_returns_per_train"][extra_col]
+            append_df[f"{extra_col}"] = self.data["extra_returns_per_train"][extra_col]
 
         append_df["do_predict"] = do_predict
         if self.freqai_config["feature_parameters"].get("DI_threshold", 0) > 0:
@@ -1131,6 +1137,51 @@ class FreqaiDataKitchen:
             if pair not in self.all_pairs:
                 self.all_pairs.append(pair)
 
+    def extract_corr_pair_columns_from_populated_indicators(
+        self,
+        dataframe: DataFrame
+    ) -> Dict[str, DataFrame]:
+        """
+        Find the columns of the dataframe corresponding to the corr_pairlist, save them
+        in a dictionary to be reused and attached to other pairs.
+
+        :param dataframe: fully populated dataframe (current pair + corr_pairs)
+        :return: corr_dataframes, dictionary of dataframes to be attached
+                 to other pairs in same candle.
+        """
+        corr_dataframes: Dict[str, DataFrame] = {}
+        pairs = self.freqai_config["feature_parameters"].get("include_corr_pairlist", [])
+
+        for pair in pairs:
+            valid_strs = [f"%-{pair}", f"%{pair}", f"%_{pair}"]
+            pair_cols = [col for col in dataframe.columns if
+                         any(substr in col for substr in valid_strs)]
+            pair_cols.insert(0, 'date')
+            corr_dataframes[pair] = dataframe.filter(pair_cols, axis=1)
+
+        return corr_dataframes
+
+    def attach_corr_pair_columns(self, dataframe: DataFrame,
+                                 corr_dataframes: Dict[str, DataFrame],
+                                 current_pair: str) -> DataFrame:
+        """
+        Attach the existing corr_pair dataframes to the current pair dataframe before training
+
+        :param dataframe: current pair strategy dataframe, indicators populated already
+        :param corr_dataframes: dictionary of saved dataframes from earlier in the same candle
+        :param current_pair: current pair to which we will attach corr pair dataframe
+        :return:
+        :dataframe: current pair dataframe of populated indicators, concatenated with corr_pairs
+                    ready for training
+        """
+        pairs = self.freqai_config["feature_parameters"].get("include_corr_pairlist", [])
+
+        for pair in pairs:
+            if current_pair != pair:
+                dataframe = dataframe.merge(corr_dataframes[pair], how='left', on='date')
+
+        return dataframe
+
     def use_strategy_to_populate_indicators(
         self,
         strategy: IStrategy,
@@ -1138,6 +1189,7 @@ class FreqaiDataKitchen:
         base_dataframes: dict = {},
         pair: str = "",
         prediction_dataframe: DataFrame = pd.DataFrame(),
+        do_corr_pairs: bool = True,
     ) -> DataFrame:
         """
         Use the user defined strategy for populating indicators during retrain
@@ -1147,15 +1199,15 @@ class FreqaiDataKitchen:
         :param base_dataframes: dict = dict containing the current pair dataframes
                                 (for user defined timeframes)
         :param metadata: dict = strategy furnished pair metadata
-        :returns:
+        :return:
         dataframe: DataFrame = dataframe containing populated indicators
         """
 
         # for prediction dataframe creation, we let dataprovider handle everything in the strategy
         # so we create empty dictionaries, which allows us to pass None to
         # `populate_any_indicators()`. Signaling we want the dp to give us the live dataframe.
-        tfs = self.freqai_config["feature_parameters"].get("include_timeframes")
-        pairs = self.freqai_config["feature_parameters"].get("include_corr_pairlist", [])
+        tfs: List[str] = self.freqai_config["feature_parameters"].get("include_timeframes")
+        pairs: List[str] = self.freqai_config["feature_parameters"].get("include_corr_pairlist", [])
         if not prediction_dataframe.empty:
             dataframe = prediction_dataframe.copy()
             for tf in tfs:
@@ -1178,15 +1230,18 @@ class FreqaiDataKitchen:
                 informative=base_dataframes[tf],
                 set_generalized_indicators=sgi
             )
-            if pairs:
-                for i in pairs:
-                    if pair in i:
-                        continue  # dont repeat anything from whitelist
+
+        # ensure corr pairs are always last
+        for corr_pair in pairs:
+            if pair == corr_pair:
+                continue  # dont repeat anything from whitelist
+            for tf in tfs:
+                if pairs and do_corr_pairs:
                     dataframe = strategy.populate_any_indicators(
-                        i,
+                        corr_pair,
                         dataframe.copy(),
                         tf,
-                        informative=corr_dataframes[i][tf]
+                        informative=corr_dataframes[corr_pair][tf]
                     )
 
         self.get_unique_classes_from_labels(dataframe)
