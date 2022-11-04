@@ -16,9 +16,6 @@
         "exit": 30
     },
     "exchange": {
-        "name": "binance",
-        "key": "jQ93pEoaMuo2do5FfWUewC6QRH8Hu3hG7YE9TBu4ws9WcWg9tc8GTJTRFjkNLDxF",
-        "secret": "Dgb0W2sEb4jh0Hya9WxFHAVNky1Ozu2rHBAk8IljxVEOP3jvdnD1ylv531flI3Sk",
         "ccxt_config": {
             "enableRateLimit": true
         },
@@ -27,7 +24,12 @@
             "rateLimit": 200
         },
         "pair_whitelist": [
-            "1INCH/USDT"
+            "ZEC/USDT",
+            "VET/USDT",
+            "DOGE/USDT",
+            "1INCH/USDT",
+            "ADA/USDT",
+            "SNX/USDT"
         ],
         "pair_blacklist": []
     },
@@ -68,7 +70,7 @@
         "backtest_period_days": 0.5,
         "fit_live_predictions_candles": 0,
         "identifier": "LitmusMinMaxBroadClassifier",
-        "fixed_leverage": 3.0,
+        "fixed_leverage": 3,
         "feature_parameters": {
             "include_timeframes": [
                 "3m",
@@ -80,9 +82,7 @@
             ],
             "label_period_candles": 0,
             "include_shifted_candles": 2,
-            "DI_threshold": 0.9,
-            "DI_window": 100,
-            "DI_std_mul": 2.5,
+            "DI_threshold": 1.9,
             "weight_factor": 0.7,
             "principal_component_analysis": false,
             "use_SVM_to_remove_outliers": true,
@@ -115,6 +115,16 @@
                 "scoring": "f1_macro",
                 "cv": 3
             },
+            "boruta_selection": {
+                "enabled": false,
+                "importance_measure": "gini",
+                "percentile": 90,
+                "n_trials": 100,
+                "sample": false,
+                "train_or_test": "test",
+                "normalize": true,
+                "verbose": false
+            },
             "recursive_addition": {
                 "enabled": false,
                 "n_estimators": 1000,
@@ -125,9 +135,9 @@
             "catboost_selection": {
                 "enabled": true,
                 "num_features_select": 200,
-                "steps": 1
+                "steps": 2
             },
-            "feature_importance": {
+            "save_feature_importance": {
                 "pct_enabled": 0.1
             }
         },
@@ -147,7 +157,7 @@
             "target_offset": [0, 0]
         },
         "trigger_parameters": {
-            "fbeta_entry": 0.4,
+            "fbeta_entry": 1,
             "fbeta_exit": 1,
             "smoothing_window": 30
         },

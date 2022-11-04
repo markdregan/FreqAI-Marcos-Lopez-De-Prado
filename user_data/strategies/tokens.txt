@@ -12,6 +12,20 @@
 "SUSHI/USDT",
 "XRP/USDT"
 
+Drafty's List
+"ZEC/USDT",
+"VET/USDT",
+"DOGE/USDT",
+"1INCH/USDT",
+"ADA/USDT",
+"SNX/USDT",
+"XMR/USDT",
+"DOT/USDT",
+"XLM/USDT",
+"AVAX/USDT",
+"LTC/USDT"
+
+
 Keir's List DEFI
 
 "1INCH/USDT",

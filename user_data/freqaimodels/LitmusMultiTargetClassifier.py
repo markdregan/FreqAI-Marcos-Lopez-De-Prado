@@ -5,6 +5,7 @@ import numpy.typing as npt
 import optuna
 import pandas as pd
 
+from BorutaShap import BorutaShap
 from catboost import CatBoostClassifier, Pool, EFstrType, EFeaturesSelectionAlgorithm, EShapCalcType
 from feature_engine.selection import (SmartCorrelatedSelection, RecursiveFeatureAddition,
                                       DropHighPSIFeatures, DropCorrelatedFeatures)
@@ -204,6 +205,29 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 logger.info(f"Dropping {num_dropped} correlated features. "
                             f"{num_remaining} remaining.")
 
+            # Boruta Feature Selection
+            if self.freqai_info["feature_selection"]["boruta_selection"].get("enabled", False):
+                logger.info(f"Starting boruta for {len(X_train.columns)} features")
+                boruta_params = self.freqai_info["feature_selection"]["boruta_selection"]
+
+                boruta_selector = BorutaShap(
+                    importance_measure=boruta_params["importance_measure"],
+                    percentile=boruta_params["percentile"],
+                    classification=True)
+                boruta_selector.fit(
+                    X=X_train, y=y_train, n_trials=boruta_params["n_trials"],
+                    sample=boruta_params["sample"],
+                    train_or_test=boruta_params["train_or_test"],
+                    normalize=boruta_params["normalize"], verbose=boruta_params["verbose"])
+
+                # Incase there are undecided features
+                boruta_selector.TentativeRoughFix()
+
+                X_train = boruta_selector.Subset()
+                X_test = X_test.loc[:, X_train.columns]
+
+                logger.info(f"Boruta selected {len(X_train.columns)} features")
+
             # Recursive feature addition
             if self.freqai_info["feature_selection"]["recursive_addition"].get(
                     "enabled", False):
@@ -358,7 +382,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             dk.data["extra_returns_per_train"][f"num_trees_{t}"] = model.tree_count_
 
             # Compute feature importance & save to db
-            pct_enabled = self.freqai_info["feature_selection"]["feature_importance"].get(
+            pct_enabled = self.freqai_info["feature_selection"]["save_feature_importance"].get(
                 "pct_enabled", 0)
             rand = np.random.random()
             if rand < pct_enabled:
