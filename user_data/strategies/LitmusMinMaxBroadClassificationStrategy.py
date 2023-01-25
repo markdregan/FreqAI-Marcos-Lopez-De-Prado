@@ -262,14 +262,6 @@ class LitmusMinMaxBroadClassificationStrategy(IStrategy):
 
                 df[f"real_peaks_{i}"] = peaks
 
-            # Cointegration features
-            """
-            df["%-compare-BTC-log-returns_3m"] = (
-                    np.log(df[f"%-{coin}-raw_price_3m"]) - np.log(df["%-BTC-raw_price_3m"])
-            )
-            df["%-compare-BTC-log-returns-zscore_3m"] = zscore(df["%-compare-BTC-log-returns_3m"])
-            """
-
         return df
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
