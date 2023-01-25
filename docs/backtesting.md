@@ -300,7 +300,11 @@ A backtesting result will look like that:
 | Absolute profit             | 0.00762792 BTC      |
 | Total profit %              | 76.2%               |
 | CAGR %                      | 460.87%             |
+| Sortino                     | 1.88                |
+| Sharpe                      | 2.97                |
+| Calmar                      | 6.29                |
 | Profit factor               | 1.11                |
+| Expectancy                  | -0.15               |
 | Avg. stake amount           | 0.001      BTC      |
 | Total trade volume          | 0.429      BTC      |
 |                             |                     |
@@ -400,7 +404,11 @@ It contains some useful key metrics about performance of your strategy on backte
 | Absolute profit             | 0.00762792 BTC      |
 | Total profit %              | 76.2%               |
 | CAGR %                      | 460.87%             |
+| Sortino                     | 1.88                |
+| Sharpe                      | 2.97                |
+| Calmar                      | 6.29                |
 | Profit factor               | 1.11                |
+| Expectancy                  | -0.15               |
 | Avg. stake amount           | 0.001      BTC      |
 | Total trade volume          | 0.429      BTC      |
 |                             |                     |
@@ -447,6 +455,9 @@ It contains some useful key metrics about performance of your strategy on backte
 - `Absolute profit`: Profit made in stake currency.
 - `Total profit %`: Total profit. Aligned to the `TOTAL` row's `Tot Profit %` from the first table. Calculated as `(End capital − Starting capital) / Starting capital`.
 - `CAGR %`: Compound annual growth rate.
+- `Sortino`: Annualized Sortino ratio.
+- `Sharpe`: Annualized Sharpe ratio.
+- `Calmar`: Annualized Calmar ratio.
 - `Profit factor`: profit / loss.
 - `Avg. stake amount`: Average stake amount, either `stake_amount` or the average when using dynamic stake amount.
 - `Total trade volume`: Volume generated on the exchange to reach the above profit.
@@ -583,7 +594,8 @@ To utilize this, you can append `--timeframe-detail 5m` to your regular backtest
 freqtrade backtesting --strategy AwesomeStrategy --timeframe 1h --timeframe-detail 5m
 ```
 
-This will load 1h data as well as 5m data for the timeframe. The strategy will be analyzed with the 1h timeframe - and for every "open trade candle" (candles where a trade is open) the 5m data will be used to simulate intra-candle movements.
+This will load 1h data as well as 5m data for the timeframe. The strategy will be analyzed with the 1h timeframe, and Entry orders will only be placed at the main timeframe, however Order fills and exit signals will be evaluated at the 5m candle, simulating intra-candle movements.
+
 All callback functions (`custom_exit()`, `custom_stoploss()`, ... ) will be running for each 5m candle once the trade is opened (so 12 times in the above example of 1h timeframe, and 5m detailed timeframe).
 
 `--timeframe-detail` must be smaller than the original timeframe, otherwise backtesting will fail to start.

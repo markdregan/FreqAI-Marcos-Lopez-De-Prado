@@ -1,8 +1,6 @@
 """
 Unit test file for rpc/api_server.py
 """
-
-import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -57,7 +55,10 @@ def botclient(default_conf, mocker):
     try:
         apiserver = ApiServer(default_conf)
         apiserver.add_rpc_handler(rpc)
-        yield ftbot, TestClient(apiserver.app)
+        # We need to use the TestClient as a context manager to
+        # handle lifespan events correctly
+        with TestClient(apiserver.app) as client:
+            yield ftbot, client
         # Cleanup ... ?
     finally:
         if apiserver:
@@ -65,22 +66,23 @@ def botclient(default_conf, mocker):
         ApiServer.shutdown()
 
 
-def client_post(client, url, data={}):
+def client_post(client: TestClient, url, data={}):
+
     return client.post(url,
-                       data=data,
+                       json=data,
                        headers={'Authorization': _basic_auth_str(_TEST_USER, _TEST_PASS),
                                 'Origin': 'http://example.com',
                                 'content-type': 'application/json'
                                 })
 
 
-def client_get(client, url):
+def client_get(client: TestClient, url):
     # Add fake Origin to ensure CORS kicks in
     return client.get(url, headers={'Authorization': _basic_auth_str(_TEST_USER, _TEST_PASS),
                                     'Origin': 'http://example.com'})
 
 
-def client_delete(client, url):
+def client_delete(client: TestClient, url):
     # Add fake Origin to ensure CORS kicks in
     return client.delete(url, headers={'Authorization': _basic_auth_str(_TEST_USER, _TEST_PASS),
                                        'Origin': 'http://example.com'})
@@ -438,7 +440,6 @@ def test_api_cleanup(default_conf, mocker, caplog):
     apiserver.cleanup()
     assert apiserver._server.cleanup.call_count == 1
     assert log_has("Stopping API Server", caplog)
-    assert log_has("Stopping API Server background tasks", caplog)
     ApiServer.shutdown()
 
 
@@ -559,7 +560,7 @@ def test_api_locks(botclient):
     assert rc.json()['lock_count'] == 1
 
     rc = client_post(client, f"{BASE_URI}/locks/delete",
-                     data='{"pair": "XRP/BTC"}')
+                     data={"pair": "XRP/BTC"})
     assert_response(rc)
     assert rc.json()['lock_count'] == 0
 
@@ -586,7 +587,7 @@ def test_api_show_config(botclient):
     assert 'unfilledtimeout' in response
     assert 'version' in response
     assert 'api_version' in response
-    assert 2.1 <= response['api_version'] <= 2.2
+    assert 2.1 <= response['api_version'] < 3.0
 
 
 def test_api_daily(botclient, mocker, ticker, fee, markets):
@@ -983,6 +984,7 @@ def test_api_status(botclient, mocker, ticker, fee, markets, is_short,
         'base_currency': 'ETH',
         'quote_currency': 'BTC',
         'stake_amount': 0.001,
+        'max_stake_amount': ANY,
         'stop_loss_abs': ANY,
         'stop_loss_pct': ANY,
         'stop_loss_ratio': ANY,
@@ -1012,11 +1014,9 @@ def test_api_status(botclient, mocker, ticker, fee, markets, is_short,
         'open_order_id': open_order_id,
         'open_rate_requested': ANY,
         'open_trade_value': open_trade_value,
-        'sell_reason': None,
         'exit_reason': None,
         'exit_order_status': None,
         'strategy': CURRENT_TEST_STRATEGY,
-        'buy_tag': None,
         'enter_tag': None,
         'timeframe': 5,
         'exchange': 'binance',
@@ -1061,7 +1061,7 @@ def test_api_blacklist(botclient, mocker):
 
     # Add ETH/BTC to blacklist
     rc = client_post(client, f"{BASE_URI}/blacklist",
-                     data='{"blacklist": ["ETH/BTC"]}')
+                     data={"blacklist": ["ETH/BTC"]})
     assert_response(rc)
     assert rc.json() == {"blacklist": ["DOGE/BTC", "HOT/BTC", "ETH/BTC"],
                          "blacklist_expanded": ["ETH/BTC"],
@@ -1071,7 +1071,7 @@ def test_api_blacklist(botclient, mocker):
                          }
 
     rc = client_post(client, f"{BASE_URI}/blacklist",
-                     data='{"blacklist": ["XRP/.*"]}')
+                     data={"blacklist": ["XRP/.*"]})
     assert_response(rc)
     assert rc.json() == {"blacklist": ["DOGE/BTC", "HOT/BTC", "ETH/BTC", "XRP/.*"],
                          "blacklist_expanded": ["ETH/BTC", "XRP/BTC", "XRP/USDT"],
@@ -1133,7 +1133,7 @@ def test_api_force_entry(botclient, mocker, fee, endpoint):
     ftbot, client = botclient
 
     rc = client_post(client, f"{BASE_URI}/{endpoint}",
-                     data='{"pair": "ETH/BTC"}')
+                     data={"pair": "ETH/BTC"})
     assert_response(rc, 502)
     assert rc.json() == {"error": f"Error querying /api/v1/{endpoint}: Force_entry not enabled."}
 
@@ -1143,7 +1143,7 @@ def test_api_force_entry(botclient, mocker, fee, endpoint):
     fbuy_mock = MagicMock(return_value=None)
     mocker.patch("freqtrade.rpc.RPC._rpc_force_entry", fbuy_mock)
     rc = client_post(client, f"{BASE_URI}/{endpoint}",
-                     data='{"pair": "ETH/BTC"}')
+                     data={"pair": "ETH/BTC"})
     assert_response(rc)
     assert rc.json() == {"status": "Error entering long trade for pair ETH/BTC."}
 
@@ -1170,7 +1170,7 @@ def test_api_force_entry(botclient, mocker, fee, endpoint):
     mocker.patch("freqtrade.rpc.RPC._rpc_force_entry", fbuy_mock)
 
     rc = client_post(client, f"{BASE_URI}/{endpoint}",
-                     data='{"pair": "ETH/BTC"}')
+                     data={"pair": "ETH/BTC"})
     assert_response(rc)
     assert rc.json() == {
         'amount': 1.0,
@@ -1186,6 +1186,7 @@ def test_api_force_entry(botclient, mocker, fee, endpoint):
         'base_currency': 'ETH',
         'quote_currency': 'BTC',
         'stake_amount': 1,
+        'max_stake_amount': ANY,
         'stop_loss_abs': None,
         'stop_loss_pct': None,
         'stop_loss_ratio': None,
@@ -1216,11 +1217,9 @@ def test_api_force_entry(botclient, mocker, fee, endpoint):
         'open_order_id': '123456',
         'open_rate_requested': None,
         'open_trade_value': 0.24605460,
-        'sell_reason': None,
         'exit_reason': None,
         'exit_order_status': None,
         'strategy': CURRENT_TEST_STRATEGY,
-        'buy_tag': None,
         'enter_tag': None,
         'timeframe': 5,
         'exchange': 'binance',
@@ -1246,7 +1245,7 @@ def test_api_forceexit(botclient, mocker, ticker, fee, markets):
     patch_get_signal(ftbot)
 
     rc = client_post(client, f"{BASE_URI}/forceexit",
-                     data='{"tradeid": "1"}')
+                     data={"tradeid": "1"})
     assert_response(rc, 502)
     assert rc.json() == {"error": "Error querying /api/v1/forceexit: invalid argument"}
     Trade.query.session.rollback()
@@ -1255,7 +1254,7 @@ def test_api_forceexit(botclient, mocker, ticker, fee, markets):
     trade = Trade.get_trades([Trade.id == 5]).first()
     assert pytest.approx(trade.amount) == 123
     rc = client_post(client, f"{BASE_URI}/forceexit",
-                     data='{"tradeid": "5", "ordertype": "market", "amount": 23}')
+                     data={"tradeid": "5", "ordertype": "market", "amount": 23})
     assert_response(rc)
     assert rc.json() == {'result': 'Created sell order for trade 5.'}
     Trade.query.session.rollback()
@@ -1265,7 +1264,7 @@ def test_api_forceexit(botclient, mocker, ticker, fee, markets):
     assert trade.is_open is True
 
     rc = client_post(client, f"{BASE_URI}/forceexit",
-                     data='{"tradeid": "5"}')
+                     data={"tradeid": "5"})
     assert_response(rc)
     assert rc.json() == {'result': 'Created sell order for trade 5.'}
     Trade.query.session.rollback()
@@ -1418,7 +1417,7 @@ def test_api_pair_history(botclient, ohlcv_history):
                                   "No data for UNITTEST/BTC, 5m in 20200111-20200112 found.")
 
 
-def test_api_plot_config(botclient):
+def test_api_plot_config(botclient, mocker):
     ftbot, client = botclient
 
     rc = client_get(client, f"{BASE_URI}/plot_config")
@@ -1442,6 +1441,21 @@ def test_api_plot_config(botclient):
     assert isinstance(rc.json()['main_plot'], dict)
     assert isinstance(rc.json()['subplots'], dict)
 
+    rc = client_get(client, f"{BASE_URI}/plot_config?strategy=freqai_test_classifier")
+    assert_response(rc)
+    res = rc.json()
+    assert 'target_roi' in res['subplots']
+    assert 'do_predict' in res['subplots']
+
+    rc = client_get(client, f"{BASE_URI}/plot_config?strategy=HyperoptableStrategy")
+    assert_response(rc)
+    assert rc.json()['subplots'] == {}
+
+    mocker.patch('freqtrade.rpc.api_server.api_v1.get_rpc_optional', return_value=None)
+
+    rc = client_get(client, f"{BASE_URI}/plot_config")
+    assert_response(rc)
+
 
 def test_api_strategies(botclient, tmpdir):
     ftbot, client = botclient
@@ -1459,7 +1473,9 @@ def test_api_strategies(botclient, tmpdir):
         'StrategyTestV3',
         'StrategyTestV3CustomEntryPrice',
         'StrategyTestV3Futures',
+        'freqai_rl_test_strat',
         'freqai_test_classifier',
+        'freqai_test_multimodel_classifier_strat',
         'freqai_test_multimodel_strat',
         'freqai_test_strat'
     ]}
@@ -1482,6 +1498,44 @@ def test_api_strategy(botclient):
     # Disallow base64 strategies
     rc = client_get(client, f"{BASE_URI}/strategy/xx:cHJpbnQoImhlbGxvIHdvcmxkIik=")
     assert_response(rc, 500)
+
+
+def test_api_freqaimodels(botclient, tmpdir, mocker):
+    ftbot, client = botclient
+    ftbot.config['user_data_dir'] = Path(tmpdir)
+    mocker.patch(
+        "freqtrade.resolvers.freqaimodel_resolver.FreqaiModelResolver.search_all_objects",
+        return_value=[
+            {'name': 'LightGBMClassifier'},
+            {'name': 'LightGBMClassifierMultiTarget'},
+            {'name': 'LightGBMRegressor'},
+            {'name': 'LightGBMRegressorMultiTarget'},
+            {'name': 'ReinforcementLearner'},
+            {'name': 'ReinforcementLearner_multiproc'},
+            {'name': 'XGBoostClassifier'},
+            {'name': 'XGBoostRFClassifier'},
+            {'name': 'XGBoostRFRegressor'},
+            {'name': 'XGBoostRegressor'},
+            {'name': 'XGBoostRegressorMultiTarget'},
+        ])
+
+    rc = client_get(client, f"{BASE_URI}/freqaimodels")
+
+    assert_response(rc)
+
+    assert rc.json() == {'freqaimodels': [
+        'LightGBMClassifier',
+        'LightGBMClassifierMultiTarget',
+        'LightGBMRegressor',
+        'LightGBMRegressorMultiTarget',
+        'ReinforcementLearner',
+        'ReinforcementLearner_multiproc',
+        'XGBoostClassifier',
+        'XGBoostRFClassifier',
+        'XGBoostRFRegressor',
+        'XGBoostRegressor',
+        'XGBoostRegressorMultiTarget'
+    ]}
 
 
 def test_list_available_pairs(botclient):
@@ -1514,13 +1568,13 @@ def test_list_available_pairs(botclient):
         client, f"{BASE_URI}/available_pairs?timeframe=1h")
     assert_response(rc)
     assert rc.json()['length'] == 1
-    assert rc.json()['pairs'] == ['XRP/USDT']
+    assert rc.json()['pairs'] == ['XRP/USDT:USDT']
 
     rc = client_get(
         client, f"{BASE_URI}/available_pairs?timeframe=1h&candletype=mark")
     assert_response(rc)
     assert rc.json()['length'] == 2
-    assert rc.json()['pairs'] == ['UNITTEST/USDT', 'XRP/USDT']
+    assert rc.json()['pairs'] == ['UNITTEST/USDT:USDT', 'XRP/USDT:USDT']
     assert len(rc.json()['pair_interval']) == 2
 
 
@@ -1576,7 +1630,7 @@ def test_api_backtesting(botclient, mocker, fee, caplog, tmpdir):
         "dry_run_wallet": 1000,
         "enable_protections": False
     }
-    rc = client_post(client, f"{BASE_URI}/backtest", data=json.dumps(data))
+    rc = client_post(client, f"{BASE_URI}/backtest", data=data)
     assert_response(rc)
     result = rc.json()
 
@@ -1627,7 +1681,7 @@ def test_api_backtesting(botclient, mocker, fee, caplog, tmpdir):
     assert result['status'] == 'running'
 
     # Post to backtest that's still running
-    rc = client_post(client, f"{BASE_URI}/backtest", data=json.dumps(data))
+    rc = client_post(client, f"{BASE_URI}/backtest", data=data)
     assert_response(rc, 502)
     result = rc.json()
     assert 'Bot Background task already running' in result['error']
@@ -1635,7 +1689,7 @@ def test_api_backtesting(botclient, mocker, fee, caplog, tmpdir):
     ApiServer._bgtask_running = False
 
     # Rerun backtest (should get previous result)
-    rc = client_post(client, f"{BASE_URI}/backtest", data=json.dumps(data))
+    rc = client_post(client, f"{BASE_URI}/backtest", data=data)
     assert_response(rc)
     result = rc.json()
     assert log_has_re('Reusing result of previous backtest.*', caplog)
@@ -1644,7 +1698,7 @@ def test_api_backtesting(botclient, mocker, fee, caplog, tmpdir):
 
     mocker.patch('freqtrade.optimize.backtesting.Backtesting.backtest_one_strategy',
                  side_effect=DependencyException())
-    rc = client_post(client, f"{BASE_URI}/backtest", data=json.dumps(data))
+    rc = client_post(client, f"{BASE_URI}/backtest", data=data)
     assert log_has("Backtesting caused an error: ", caplog)
 
     # Delete backtesting to avoid leakage since the backtest-object may stick around.
@@ -1658,7 +1712,7 @@ def test_api_backtesting(botclient, mocker, fee, caplog, tmpdir):
 
     # Disallow base64 strategies
     data['strategy'] = "xx:cHJpbnQoImhlbGxvIHdvcmxkIik="
-    rc = client_post(client, f"{BASE_URI}/backtest", data=json.dumps(data))
+    rc = client_post(client, f"{BASE_URI}/backtest", data=data)
     assert_response(rc, 500)
 
 
@@ -1667,7 +1721,7 @@ def test_api_backtest_history(botclient, mocker, testdatadir):
     mocker.patch('freqtrade.data.btanalysis._get_backtest_files',
                  return_value=[
                      testdatadir / 'backtest_results/backtest-result_multistrat.json',
-                     testdatadir / 'backtest_results/backtest-result_new.json'
+                     testdatadir / 'backtest_results/backtest-result.json'
                      ])
 
     rc = client_get(client, f"{BASE_URI}/backtest/history")
@@ -1713,18 +1767,20 @@ def test_api_ws_subscribe(botclient, mocker):
 
     with client.websocket_connect(ws_url) as ws:
         ws.send_json({'type': 'subscribe', 'data': ['whitelist']})
+        time.sleep(1)
 
     # Check call count is now 1 as we sent a valid subscribe request
     assert sub_mock.call_count == 1
 
     with client.websocket_connect(ws_url) as ws:
         ws.send_json({'type': 'subscribe', 'data': 'whitelist'})
+        time.sleep(1)
 
     # Call count hasn't changed as the subscribe request was invalid
     assert sub_mock.call_count == 1
 
 
-def test_api_ws_requests(botclient, mocker, caplog):
+def test_api_ws_requests(botclient, caplog):
     caplog.set_level(logging.DEBUG)
 
     ftbot, client = botclient
@@ -1772,24 +1828,18 @@ def test_api_ws_send_msg(default_conf, mocker, caplog):
         mocker.patch('freqtrade.rpc.api_server.ApiServer.start_api')
         apiserver = ApiServer(default_conf)
         apiserver.add_rpc_handler(RPC(get_patched_freqtradebot(mocker, default_conf)))
-        apiserver.start_message_queue()
-        # Give the queue thread time to start
-        time.sleep(0.2)
 
-        # Test message_queue coro receives the message
-        test_message = {"type": "status", "data": "test"}
-        apiserver.send_msg(test_message)
-        time.sleep(0.1)  # Not sure how else to wait for the coro to receive the data
-        assert log_has("Found message of type: status", caplog)
+        # Start test client context manager to run lifespan events
+        with TestClient(apiserver.app):
+            # Test message is published on the Message Stream
+            test_message = {"type": "status", "data": "test"}
+            first_waiter = apiserver._message_stream._waiter
+            apiserver.send_msg(test_message)
+            assert first_waiter.result()[0] == test_message
 
-        # Test if exception logged when error occurs in sending
-        mocker.patch('freqtrade.rpc.api_server.ws.channel.ChannelManager.broadcast',
-                     side_effect=Exception)
-
-        apiserver.send_msg(test_message)
-        time.sleep(0.1)  # Not sure how else to wait for the coro to receive the data
-        assert log_has_re(r"Exception happened in background task.*", caplog)
+            second_waiter = apiserver._message_stream._waiter
+            apiserver.send_msg(test_message)
+            assert first_waiter != second_waiter
 
     finally:
-        apiserver.cleanup()
         ApiServer.shutdown()

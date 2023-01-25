@@ -30,8 +30,8 @@ class PairLocks():
             PairLocks.locks = []
 
     @staticmethod
-    def lock_pair(pair: str, until: datetime, reason: str = None, *,
-                  now: datetime = None, side: str = '*') -> PairLock:
+    def lock_pair(pair: str, until: datetime, reason: Optional[str] = None, *,
+                  now: Optional[datetime] = None, side: str = '*') -> PairLock:
         """
         Create PairLock from now to "until".
         Uses database by default, unless PairLocks.use_db is set to False,
@@ -87,7 +87,7 @@ class PairLocks():
         Get the lock that expires the latest for the pair given.
         """
         locks = PairLocks.get_pair_locks(pair, now, side=side)
-        locks = sorted(locks, key=lambda l: l.lock_end_time, reverse=True)
+        locks = sorted(locks, key=lambda lock: lock.lock_end_time, reverse=True)
         return locks[0] if locks else None
 
     @staticmethod

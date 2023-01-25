@@ -54,6 +54,9 @@ This configuration enables kraken, as well as rate-limiting to avoid bans from t
 
 ## Binance
 
+!!! Warning "Server location and geo-ip restrictions"
+    Please be aware that binance restrict api access regarding the server country. The currents and non exhaustive countries blocked are United States, Malaysia (Singapour), Ontario (Canada). Please go to [binance terms > b. Eligibility](https://www.binance.com/en/terms) to find up to date list.
+
 Binance supports [time_in_force](configuration.md#understand-order_time_in_force).
 
 !!! Tip "Stoploss on Exchange"
@@ -71,6 +74,25 @@ Binance has been split into 2, and users must use the correct ccxt exchange ID f
 
 * [binance.com](https://www.binance.com/) - International users. Use exchange id: `binance`.
 * [binance.us](https://www.binance.us/) - US based users. Use exchange id: `binanceus`.
+
+### Binance RSA keys
+
+Freqtrade supports binance RSA API keys.
+
+We recommend to use them as environment variable.
+
+``` bash
+export FREQTRADE__EXCHANGE__SECRET="$(cat ./rsa_binance.private)"
+```
+
+They can however also be configured via configuration file. Since json doesn't support multi-line strings, you'll have to replace all newlines with `\n` to have a valid json file.
+
+``` json
+// ...
+ "key": "<someapikey>",
+ "secret": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBABACAFQA<...>s8KX8=\n-----END PRIVATE KEY-----"
+// ...
+```
 
 ### Binance Futures
 
@@ -171,26 +193,6 @@ lm = ct.load_markets()
 
 res = [p for p, x in lm.items() if 'US' in x['info']['prohibitedIn']]
 print(res)
-```
-
-## FTX
-
-!!! Tip "Stoploss on Exchange"
-    FTX supports `stoploss_on_exchange` and can use both stop-loss-market and stop-loss-limit orders. It provides great advantages, so we recommend to benefit from it.
-    You can use either `"limit"` or `"market"` in the `order_types.stoploss` configuration setting to decide which type of stoploss shall be used.
-
-### Using subaccounts
-
-To use subaccounts with FTX, you need to edit the configuration and add the following:
-
-``` json
-"exchange": {
-    "ccxt_config": {
-        "headers": {
-            "FTX-SUBACCOUNT": "name"
-        }
-    },
-}
 ```
 
 ## Kucoin

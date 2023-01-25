@@ -2,6 +2,8 @@
 
 import logging
 import time
+from copy import deepcopy
+from datetime import timedelta
 from unittest.mock import MagicMock, PropertyMock
 
 import pandas as pd
@@ -18,6 +20,11 @@ from freqtrade.plugins.pairlistmanager import PairListManager
 from freqtrade.resolvers import PairListResolver
 from tests.conftest import (create_mock_trades_usdt, get_patched_exchange, get_patched_freqtradebot,
                             log_has, log_has_re, num_log_has)
+
+
+# Exclude RemotePairList from tests.
+# It has a mandatory parameter, and requires special handling, which happens in test_remotepairlist.
+TESTABLE_PAIRLISTS = [p for p in AVAILABLE_PAIRLISTS if p not in ['RemotePairList']]
 
 
 @pytest.fixture(scope="function")
@@ -610,9 +617,9 @@ def test_VolumePairList_whitelist_gen(mocker, whitelist_conf, shitcoinmarkets, t
        "lookback_timeframe": "1h", "lookback_period": 2, "refresh_period": 3600}],
      "BTC", "binance", ['ETH/BTC', 'LTC/BTC', 'NEO/BTC', 'TKN/BTC', 'XRP/BTC']),
     # ftx data is already in Quote currency, therefore won't require conversion
-    ([{"method": "VolumePairList", "number_assets": 5, "sort_key": "quoteVolume",
-       "lookback_timeframe": "1d", "lookback_period": 1, "refresh_period": 86400}],
-     "BTC", "ftx", ['HOT/BTC', 'LTC/BTC', 'ETH/BTC', 'TKN/BTC', 'XRP/BTC']),
+    # ([{"method": "VolumePairList", "number_assets": 5, "sort_key": "quoteVolume",
+    #    "lookback_timeframe": "1d", "lookback_period": 1, "refresh_period": 86400}],
+    #  "BTC", "ftx", ['HOT/BTC', 'LTC/BTC', 'ETH/BTC', 'TKN/BTC', 'XRP/BTC']),
 ])
 def test_VolumePairList_range(mocker, whitelist_conf, shitcoinmarkets, tickers, ohlcv_history,
                               pairlists, base_currency, exchange, volumefilter_result) -> None:
@@ -633,8 +640,6 @@ def test_VolumePairList_range(mocker, whitelist_conf, shitcoinmarkets, tickers, 
     ohlcv_history_high_volume['low'] = ohlcv_history_high_volume.loc[:, 'low'] * 0.01
     ohlcv_history_high_volume['high'] = ohlcv_history_high_volume.loc[:, 'high'] * 0.01
     ohlcv_history_high_volume['close'] = ohlcv_history_high_volume.loc[:, 'close'] * 0.01
-
-    mocker.patch('freqtrade.exchange.ftx.Ftx.market_is_tradable', return_value=True)
 
     ohlcv_data = {
         ('ETH/BTC', '1d', CandleType.SPOT): ohlcv_history,
@@ -719,15 +724,26 @@ def test_PerformanceFilter_error(mocker, whitelist_conf, caplog) -> None:
 def test_ShuffleFilter_init(mocker, whitelist_conf, caplog) -> None:
     whitelist_conf['pairlists'] = [
         {"method": "StaticPairList"},
-        {"method": "ShuffleFilter", "seed": 42}
+        {"method": "ShuffleFilter", "seed": 43}
     ]
 
     exchange = get_patched_exchange(mocker, whitelist_conf)
-    PairListManager(exchange, whitelist_conf)
-    assert log_has("Backtesting mode detected, applying seed value: 42", caplog)
+    plm = PairListManager(exchange, whitelist_conf)
+    assert log_has("Backtesting mode detected, applying seed value: 43", caplog)
+
+    with time_machine.travel("2021-09-01 05:01:00 +00:00") as t:
+        plm.refresh_pairlist()
+        pl1 = deepcopy(plm.whitelist)
+        plm.refresh_pairlist()
+        assert plm.whitelist == pl1
+
+        t.shift(timedelta(minutes=10))
+        plm.refresh_pairlist()
+        assert plm.whitelist != pl1
+
     caplog.clear()
     whitelist_conf['runmode'] = RunMode.DRY_RUN
-    PairListManager(exchange, whitelist_conf)
+    plm = PairListManager(exchange, whitelist_conf)
     assert not log_has("Backtesting mode detected, applying seed value: 42", caplog)
     assert log_has("Live mode detected, not applying seed.", caplog)
 
@@ -813,7 +829,7 @@ def test_pair_whitelist_not_supported_Spread(mocker, default_conf, tickers) -> N
         get_patched_freqtradebot(mocker, default_conf)
 
 
-@pytest.mark.parametrize("pairlist", AVAILABLE_PAIRLISTS)
+@pytest.mark.parametrize("pairlist", TESTABLE_PAIRLISTS)
 def test_pairlist_class(mocker, whitelist_conf, markets, pairlist):
     whitelist_conf['pairlists'][0]['method'] = pairlist
     mocker.patch.multiple('freqtrade.exchange.Exchange',
@@ -828,7 +844,7 @@ def test_pairlist_class(mocker, whitelist_conf, markets, pairlist):
     assert isinstance(freqtrade.pairlists.blacklist, list)
 
 
-@pytest.mark.parametrize("pairlist", AVAILABLE_PAIRLISTS)
+@pytest.mark.parametrize("pairlist", TESTABLE_PAIRLISTS)
 @pytest.mark.parametrize("whitelist,log_message", [
     (['ETH/BTC', 'TKN/BTC'], ""),
     # TRX/ETH not in markets
@@ -861,7 +877,7 @@ def test__whitelist_for_active_markets(mocker, whitelist_conf, markets, pairlist
     assert log_message in caplog.text
 
 
-@pytest.mark.parametrize("pairlist", AVAILABLE_PAIRLISTS)
+@pytest.mark.parametrize("pairlist", TESTABLE_PAIRLISTS)
 def test__whitelist_for_active_markets_empty(mocker, whitelist_conf, pairlist, tickers):
     whitelist_conf['pairlists'][0]['method'] = pairlist
 

@@ -1,3 +1,4 @@
+import inspect
 import logging
 import threading
 import time
@@ -5,15 +6,17 @@ from abc import ABC, abstractmethod
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import psutil
 from numpy.typing import NDArray
 from pandas import DataFrame
 
 from freqtrade.configuration import TimeRange
-from freqtrade.constants import DATETIME_PRINT_FORMAT, Config
+from freqtrade.constants import Config
+from freqtrade.data.dataprovider import DataProvider
 from freqtrade.enums import RunMode
 from freqtrade.exceptions import OperationalException
 from freqtrade.exchange import timeframe_to_seconds
@@ -67,7 +70,11 @@ class IFreqaiModel(ABC):
         self.save_backtest_models: bool = self.freqai_info.get("save_backtest_models", True)
         if self.save_backtest_models:
             logger.info('Backtesting module configured to save all models.')
+
         self.dd = FreqaiDataDrawer(Path(self.full_path), self.config, self.follow_mode)
+        # set current candle to arbitrary historical date
+        self.current_candle: datetime = datetime.fromtimestamp(637887600, tz=timezone.utc)
+        self.dd.current_candle = self.current_candle
         self.scanning = False
         self.ft_params = self.freqai_info["feature_parameters"]
         self.corr_pairlist: List[str] = self.ft_params.get("include_corr_pairlist", [])
@@ -75,7 +82,7 @@ class IFreqaiModel(ABC):
         if self.keras and self.ft_params.get("DI_threshold", 0):
             self.ft_params["DI_threshold"] = 0
             logger.warning("DI threshold is not configured for Keras models yet. Deactivating.")
-        self.CONV_WIDTH = self.freqai_info.get("conv_width", 2)
+        self.CONV_WIDTH = self.freqai_info.get('conv_width', 1)
         if self.ft_params.get("inlier_metric_window", 0):
             self.CONV_WIDTH = self.ft_params.get("inlier_metric_window", 0) * 2
         self.pair_it = 0
@@ -93,9 +100,14 @@ class IFreqaiModel(ABC):
         # get_corr_dataframes is controlling the caching of corr_dataframes
         # for improved performance. Careful with this boolean.
         self.get_corr_dataframes: bool = True
-
         self._threads: List[threading.Thread] = []
         self._stop_event = threading.Event()
+        self.metadata: Dict[str, Any] = self.dd.load_global_metadata_from_disk()
+        self.data_provider: Optional[DataProvider] = None
+        self.max_system_threads = max(int(psutil.cpu_count() * 2 - 2), 1)
+        self.can_short = True  # overridden in start() with strategy.can_short
+
+        self.warned_deprecated_populate_any_indicators = False
 
         record_params(config, self.full_path)
 
@@ -124,11 +136,17 @@ class IFreqaiModel(ABC):
 
         self.live = strategy.dp.runmode in (RunMode.DRY_RUN, RunMode.LIVE)
         self.dd.set_pair_dict_info(metadata)
+        self.data_provider = strategy.dp
+        self.can_short = strategy.can_short
+
+        # check if the strategy has deprecated populate_any_indicators function
+        self.check_deprecated_populate_any_indicators(strategy)
 
         if self.live:
             self.inference_timer('start')
             self.dk = FreqaiDataKitchen(self.config, self.live, metadata["pair"])
             dk = self.start_live(dataframe, metadata, strategy, self.dk)
+            dataframe = dk.remove_features_from_df(dk.return_dataframe)
 
         # For backtesting, each pair enters and then gets trained for each window along the
         # sliding window defined by "train_period_days" (training window) and "live_retrain_hours"
@@ -137,16 +155,21 @@ class IFreqaiModel(ABC):
         # the concatenated results for the full backtesting period back to the strategy.
         elif not self.follow_mode:
             self.dk = FreqaiDataKitchen(self.config, self.live, metadata["pair"])
-            logger.info(f"Training {len(self.dk.training_timeranges)} timeranges")
-            dataframe = self.dk.use_strategy_to_populate_indicators(
-                strategy, prediction_dataframe=dataframe, pair=metadata["pair"]
-            )
-            dk = self.start_backtesting(dataframe, metadata, self.dk)
+            if not self.config.get("freqai_backtest_live_models", False):
+                logger.info(f"Training {len(self.dk.training_timeranges)} timeranges")
+                dk = self.start_backtesting(dataframe, metadata, self.dk, strategy)
+                dataframe = dk.remove_features_from_df(dk.return_dataframe)
+            else:
+                logger.info(
+                    "Backtesting using historic predictions (live models)")
+                dk = self.start_backtesting_from_historic_predictions(
+                    dataframe, metadata, self.dk)
+                dataframe = dk.return_dataframe
 
-        dataframe = dk.remove_features_from_df(dk.return_dataframe)
         self.clean_up()
         if self.live:
             self.inference_timer('stop', metadata["pair"])
+
         return dataframe
 
     def clean_up(self):
@@ -158,6 +181,13 @@ class IFreqaiModel(ABC):
         self.model = None
         self.dk = None
 
+    def _on_stop(self):
+        """
+        Callback for Subclasses to override to include logic for shutting down resources
+        when SIGINT is sent.
+        """
+        return
+
     def shutdown(self):
         """
         Cleans up threads on Shutdown, set stop event. Join threads to wait
@@ -165,6 +195,9 @@ class IFreqaiModel(ABC):
         """
         logger.info("Stopping FreqAI")
         self._stop_event.set()
+
+        self.data_provider = None
+        self._on_stop()
 
         logger.info("Waiting on Training iteration")
         for _thread in self._threads:
@@ -225,7 +258,7 @@ class IFreqaiModel(ABC):
                     self.dd.save_metric_tracker_to_disk()
 
     def start_backtesting(
-        self, dataframe: DataFrame, metadata: dict, dk: FreqaiDataKitchen
+        self, dataframe: DataFrame, metadata: dict, dk: FreqaiDataKitchen, strategy: IStrategy
     ) -> FreqaiDataKitchen:
         """
         The main broad execution for backtesting. For backtesting, each pair enters and then gets
@@ -237,57 +270,81 @@ class IFreqaiModel(ABC):
         :param dataframe: DataFrame = strategy passed dataframe
         :param metadata: Dict = pair metadata
         :param dk: FreqaiDataKitchen = Data management/analysis tool associated to present pair only
+        :param strategy: Strategy to train on
         :return:
             FreqaiDataKitchen = Data management/analysis tool associated to present pair only
         """
 
         self.pair_it += 1
         train_it = 0
+        pair = metadata["pair"]
+        populate_indicators = True
+        check_features = True
         # Loop enforcing the sliding window training/backtesting paradigm
         # tr_train is the training time range e.g. 1 historical month
         # tr_backtest is the backtesting time range e.g. the week directly
         # following tr_train. Both of these windows slide through the
         # entire backtest
         for tr_train, tr_backtest in zip(dk.training_timeranges, dk.backtesting_timeranges):
-            pair = metadata["pair"]
             (_, _, _) = self.dd.get_pair_dict_info(pair)
             train_it += 1
             total_trains = len(dk.backtesting_timeranges)
             self.training_timerange = tr_train
-            dataframe_train = dk.slice_dataframe(tr_train, dataframe)
-            dataframe_backtest = dk.slice_dataframe(tr_backtest, dataframe)
+            len_backtest_df = len(dataframe.loc[(dataframe["date"] >= tr_backtest.startdt) & (
+                                  dataframe["date"] < tr_backtest.stopdt), :])
 
-            trained_timestamp = tr_train
-            tr_train_startts_str = datetime.fromtimestamp(
-                                                tr_train.startts,
-                                                tz=timezone.utc).strftime(DATETIME_PRINT_FORMAT)
-            tr_train_stopts_str = datetime.fromtimestamp(
-                                                tr_train.stopts,
-                                                tz=timezone.utc).strftime(DATETIME_PRINT_FORMAT)
-            logger.info(
-                f"Training {pair}, {self.pair_it}/{self.total_pairs} pairs"
-                f" from {tr_train_startts_str} to {tr_train_stopts_str}, {train_it}/{total_trains} "
-                "trains"
-            )
+            if not self.ensure_data_exists(len_backtest_df, tr_backtest, pair):
+                continue
 
-            trained_timestamp_int = int(trained_timestamp.stopts)
-            dk.set_paths(pair, trained_timestamp_int)
+            self.log_backtesting_progress(tr_train, pair, train_it, total_trains)
 
-            dk.set_new_model_names(pair, trained_timestamp)
+            timestamp_model_id = int(tr_train.stopts)
+            if dk.backtest_live_models:
+                timestamp_model_id = int(tr_backtest.startts)
 
-            if dk.check_if_backtest_prediction_exists():
-                self.dd.load_metadata(dk)
-                dk.find_features(dataframe_train)
-                self.check_if_feature_list_matches_strategy(dk)
+            dk.set_paths(pair, timestamp_model_id)
+
+            dk.set_new_model_names(pair, timestamp_model_id)
+
+            if dk.check_if_backtest_prediction_is_valid(len_backtest_df):
+                if check_features:
+                    self.dd.load_metadata(dk)
+                    dataframe_dummy_features = self.dk.use_strategy_to_populate_indicators(
+                        strategy, prediction_dataframe=dataframe.tail(1), pair=metadata["pair"]
+                    )
+                    dk.find_features(dataframe_dummy_features)
+                    self.check_if_feature_list_matches_strategy(dk)
+                    check_features = False
                 append_df = dk.get_backtesting_prediction()
                 dk.append_predictions(append_df)
             else:
+                if populate_indicators:
+                    dataframe = self.dk.use_strategy_to_populate_indicators(
+                        strategy, prediction_dataframe=dataframe, pair=metadata["pair"]
+                    )
+                    populate_indicators = False
+
+                dataframe_base_train = dataframe.loc[dataframe["date"] < tr_train.stopdt, :]
+                dataframe_base_train = strategy.set_freqai_targets(dataframe_base_train)
+                dataframe_base_backtest = dataframe.loc[dataframe["date"] < tr_backtest.stopdt, :]
+                dataframe_base_backtest = strategy.set_freqai_targets(dataframe_base_backtest)
+
+                dataframe_train = dk.slice_dataframe(tr_train, dataframe_base_train)
+                dataframe_backtest = dk.slice_dataframe(tr_backtest, dataframe_base_backtest)
+
                 if not self.model_exists(dk):
                     dk.find_features(dataframe_train)
                     dk.find_labels(dataframe_train)
-                    self.model = self.train(dataframe_train, pair, dk)
+
+                    try:
+                        self.model = self.train(dataframe_train, pair, dk)
+                    except Exception as msg:
+                        logger.warning(
+                            f"Training {pair} raised exception {msg.__class__.__name__}. "
+                            f"Message: {msg}, skipping.")
+
                     self.dd.pair_dict[pair]["trained_timestamp"] = int(
-                        trained_timestamp.stopts)
+                        tr_train.stopts)
                     if self.plot_features:
                         plot_feature_importance(self.model, pair, dk, self.plot_features)
                     if self.save_backtest_models:
@@ -300,10 +357,11 @@ class IFreqaiModel(ABC):
                     self.model = self.dd.load_data(pair, dk)
 
                 pred_df, do_preds = self.predict(dataframe_backtest, dk)
-                append_df = dk.get_predictions_to_append(pred_df, do_preds)
+                append_df = dk.get_predictions_to_append(pred_df, do_preds, dataframe_backtest)
                 dk.append_predictions(append_df)
                 dk.save_backtesting_prediction(append_df)
 
+        self.backtesting_fit_live_predictions(dk)
         dk.fill_predictions(dataframe)
 
         return dk
@@ -321,7 +379,6 @@ class IFreqaiModel(ABC):
         :returns:
         dk: FreqaiDataKitchen = Data management/analysis tool associated to present pair only
         """
-
         # update follower
         if self.follow_mode:
             self.dd.update_follower_metadata()
@@ -339,6 +396,7 @@ class IFreqaiModel(ABC):
         if self.dd.historic_data:
             self.dd.update_historic_data(strategy, dk)
             logger.debug(f'Updating historic data on pair {metadata["pair"]}')
+            self.track_current_candle()
 
         if not self.follow_mode:
 
@@ -576,7 +634,7 @@ class IFreqaiModel(ABC):
         model = self.train(unfiltered_dataframe, pair, dk)
 
         self.dd.pair_dict[pair]["trained_timestamp"] = new_trained_timerange.stopts
-        dk.set_new_model_names(pair, new_trained_timerange)
+        dk.set_new_model_names(pair, new_trained_timerange.stopts)
         self.dd.save_data(model, pair, dk)
 
         if self.plot_features:
@@ -615,6 +673,8 @@ class IFreqaiModel(ABC):
         self.dd.historic_predictions[pair] = pred_df
         hist_preds_df = self.dd.historic_predictions[pair]
 
+        self.set_start_dry_live_date(strat_df)
+
         for label in hist_preds_df.columns:
             if hist_preds_df[label].dtype == object:
                 continue
@@ -627,7 +687,7 @@ class IFreqaiModel(ABC):
             hist_preds_df['DI_values'] = 0
 
         for return_str in dk.data['extra_returns_per_train']:
-            hist_preds_df[return_str] = 0
+            hist_preds_df[return_str] = dk.data['extra_returns_per_train'][return_str]
 
         hist_preds_df['close_price'] = strat_df['close']
         hist_preds_df['date_pred'] = strat_df['date']
@@ -655,7 +715,8 @@ class IFreqaiModel(ABC):
         for label in full_labels:
             if self.dd.historic_predictions[dk.pair][label].dtype == object:
                 continue
-            f = spy.stats.norm.fit(self.dd.historic_predictions[dk.pair][label].tail(num_candles))
+            f = spy.stats.norm.fit(
+                self.dd.historic_predictions[dk.pair][label].tail(num_candles))
             dk.data["labels_mean"][label], dk.data["labels_std"][label] = f[0], f[1]
 
         return
@@ -683,8 +744,6 @@ class IFreqaiModel(ABC):
                                    " avoid blinding open trades and degrading performance.")
                 self.pair_it = 0
                 self.inference_time = 0
-                if self.corr_pairlist:
-                    self.get_corr_dataframes = True
         return
 
     def train_timer(self, do: Literal['start', 'stop'] = 'start', pair: str = ''):
@@ -760,11 +819,150 @@ class IFreqaiModel(ABC):
                                "is included in the column names when you are creating features "
                                "in `populate_any_indicators()`.")
             self.get_corr_dataframes = not bool(self.corr_dataframes)
-        else:
+        elif self.corr_dataframes:
             dataframe = dk.attach_corr_pair_columns(
                 dataframe, self.corr_dataframes, dk.pair)
 
         return dataframe
+
+    def track_current_candle(self):
+        """
+        Checks if the latest candle appended by the datadrawer is
+        equivalent to the latest candle seen by FreqAI. If not, it
+        asks to refresh the cached corr_dfs, and resets the pair
+        counter.
+        """
+        if self.dd.current_candle > self.current_candle:
+            self.get_corr_dataframes = True
+            self.pair_it = 1
+            self.current_candle = self.dd.current_candle
+
+    def ensure_data_exists(self, len_dataframe_backtest: int,
+                           tr_backtest: TimeRange, pair: str) -> bool:
+        """
+        Check if the dataframe is empty, if not, report useful information to user.
+        :param len_dataframe_backtest: the len of backtesting dataframe
+        :param tr_backtest: current backtesting timerange.
+        :param pair: current pair
+        :return: if the data exists or not
+        """
+        if self.config.get("freqai_backtest_live_models", False) and len_dataframe_backtest == 0:
+            logger.info(f"No data found for pair {pair} from "
+                        f"from { tr_backtest.start_fmt} to {tr_backtest.stop_fmt}. "
+                        "Probably more than one training within the same candle period.")
+            return False
+        return True
+
+    def log_backtesting_progress(self, tr_train: TimeRange, pair: str,
+                                 train_it: int, total_trains: int):
+        """
+        Log the backtesting progress so user knows how many pairs have been trained and
+        how many more pairs/trains remain.
+        :param tr_train: the training timerange
+        :param train_it: the train iteration for the current pair (the sliding window progress)
+        :param pair: the current pair
+        :param total_trains: total trains (total number of slides for the sliding window)
+        """
+        if not self.config.get("freqai_backtest_live_models", False):
+            logger.info(
+                f"Training {pair}, {self.pair_it}/{self.total_pairs} pairs"
+                f" from {tr_train.start_fmt} "
+                f"to {tr_train.stop_fmt}, {train_it}/{total_trains} "
+                "trains"
+            )
+
+    def backtesting_fit_live_predictions(self, dk: FreqaiDataKitchen):
+        """
+        Apply fit_live_predictions function in backtesting with a dummy historic_predictions
+        The loop is required to simulate dry/live operation, as it is not possible to predict
+        the type of logic implemented by the user.
+        :param dk: datakitchen object
+        """
+        fit_live_predictions_candles = self.freqai_info.get("fit_live_predictions_candles", 0)
+        if fit_live_predictions_candles:
+            logger.info("Applying fit_live_predictions in backtesting")
+            label_columns = [col for col in dk.full_df.columns if (
+                col.startswith("&") and
+                not (col.startswith("&") and col.endswith("_mean")) and
+                not (col.startswith("&") and col.endswith("_std")) and
+                col not in self.dk.data["extra_returns_per_train"])
+            ]
+
+            for index in range(len(dk.full_df)):
+                if index >= fit_live_predictions_candles:
+                    self.dd.historic_predictions[self.dk.pair] = (
+                        dk.full_df.iloc[index - fit_live_predictions_candles:index])
+                    self.fit_live_predictions(self.dk, self.dk.pair)
+                    for label in label_columns:
+                        if dk.full_df[label].dtype == object:
+                            continue
+                        if "labels_mean" in self.dk.data:
+                            dk.full_df.at[index, f"{label}_mean"] = (
+                                self.dk.data["labels_mean"][label])
+                        if "labels_std" in self.dk.data:
+                            dk.full_df.at[index, f"{label}_std"] = self.dk.data["labels_std"][label]
+
+                    for extra_col in self.dk.data["extra_returns_per_train"]:
+                        dk.full_df.at[index, f"{extra_col}"] = (
+                            self.dk.data["extra_returns_per_train"][extra_col])
+
+        return
+
+    def update_metadata(self, metadata: Dict[str, Any]):
+        """
+        Update global metadata and save the updated json file
+        :param metadata: new global metadata dict
+        """
+        self.dd.save_global_metadata_to_disk(metadata)
+        self.metadata = metadata
+
+    def set_start_dry_live_date(self, live_dataframe: DataFrame):
+        key_name = "start_dry_live_date"
+        if key_name not in self.metadata:
+            metadata = self.metadata
+            metadata[key_name] = int(
+                pd.to_datetime(live_dataframe.tail(1)["date"].values[0]).timestamp())
+            self.update_metadata(metadata)
+
+    def start_backtesting_from_historic_predictions(
+        self, dataframe: DataFrame, metadata: dict, dk: FreqaiDataKitchen
+    ) -> FreqaiDataKitchen:
+        """
+        :param dataframe: DataFrame = strategy passed dataframe
+        :param metadata: Dict = pair metadata
+        :param dk: FreqaiDataKitchen = Data management/analysis tool associated to present pair only
+        :return:
+            FreqaiDataKitchen = Data management/analysis tool associated to present pair only
+        """
+        pair = metadata["pair"]
+        dk.return_dataframe = dataframe
+        saved_dataframe = self.dd.historic_predictions[pair]
+        columns_to_drop = list(set(saved_dataframe.columns).intersection(
+            dk.return_dataframe.columns))
+        dk.return_dataframe = dk.return_dataframe.drop(columns=list(columns_to_drop))
+        dk.return_dataframe = pd.merge(
+            dk.return_dataframe, saved_dataframe, how='left', left_on='date', right_on="date_pred")
+        return dk
+
+    def check_deprecated_populate_any_indicators(self, strategy: IStrategy):
+        """
+        Check and warn if the deprecated populate_any_indicators function is used.
+        :param strategy: strategy object
+        """
+
+        if not self.warned_deprecated_populate_any_indicators:
+            self.warned_deprecated_populate_any_indicators = True
+            old_version = inspect.getsource(strategy.populate_any_indicators) != (
+                inspect.getsource(IStrategy.populate_any_indicators))
+
+            if old_version:
+                logger.warning("DEPRECATION WARNING: "
+                               "You are using the deprecated populate_any_indicators function. "
+                               "This function will raise an error on March 1 2023. "
+                               "Please update your strategy by using "
+                               "the new feature_engineering functions. See \n"
+                               "https://www.freqtrade.io/en/latest/freqai-feature-engineering/"
+                               "for details.")
 
     # Following methods which are overridden by user made prediction models.
     # See freqai/prediction_models/CatboostPredictionModel.py for an example.

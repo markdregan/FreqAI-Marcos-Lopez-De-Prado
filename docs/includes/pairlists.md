@@ -23,6 +23,7 @@ You may also use something like `.*DOWN/BTC` or `.*UP/BTC` to exclude leveraged 
 * [`StaticPairList`](#static-pair-list) (default, if not configured differently)
 * [`VolumePairList`](#volume-pair-list)
 * [`ProducerPairList`](#producerpairlist)
+* [`RemotePairList`](#remotepairlist)
 * [`AgeFilter`](#agefilter)
 * [`OffsetFilter`](#offsetfilter)
 * [`PerformanceFilter`](#performancefilter)
@@ -173,6 +174,48 @@ You can limit the length of the pairlist with the optional parameter `number_ass
     `ProducerPairList` can also be used multiple times in sequence, combining the pairs from multiple producers.
     Obviously in complex such configurations, the Producer may not provide data for all pairs, so the strategy must be fit for this.
 
+#### RemotePairList
+
+It allows the user to fetch a pairlist from a remote server or a locally stored json file within the freqtrade directory, enabling dynamic updates and customization of the trading pairlist.
+
+The RemotePairList is defined in the pairlists section of the configuration settings. It uses the following configuration options:
+
+```json
+"pairlists": [
+    {
+        "method": "RemotePairList",
+        "pairlist_url": "https://example.com/pairlist",
+        "number_assets": 10,
+        "refresh_period": 1800,
+        "keep_pairlist_on_failure": true,
+        "read_timeout": 60,
+        "bearer_token": "my-bearer-token"
+    }
+]
+```
+
+The `pairlist_url` option specifies the URL of the remote server where the pairlist is located, or the path to a local file (if file:/// is prepended). This allows the user to use either a remote server or a local file as the source for the pairlist.
+
+The user is responsible for providing a server or local file that returns a JSON object with the following structure:
+
+```json
+{
+    "pairs": ["XRP/USDT", "ETH/USDT", "LTC/USDT"],
+    "refresh_period": 1800,
+}
+```
+
+The `pairs` property should contain a list of strings with the trading pairs to be used by the bot. The `refresh_period` property is optional and specifies the number of seconds that the pairlist should be cached before being refreshed.
+
+The optional `keep_pairlist_on_failure` specifies whether the previous received pairlist should be used if the remote server is not reachable or returns an error. The default value is true.
+
+The optional `read_timeout` specifies the maximum amount of time (in seconds) to wait for a response from the remote source, The default value is 60.
+
+The optional `bearer_token` will be included in the requests Authorization Header.
+
+!!! Note
+    In case of a server error the last received pairlist will be kept if `keep_pairlist_on_failure` is set to true, when set to false a empty pairlist is returned.
+
 #### AgeFilter
 
 Removes pairs that have been listed on the exchange for less than `min_days_listed` days (defaults to `10`) or more than `max_days_listed` days (defaults `None` mean infinity).
@@ -268,7 +311,7 @@ This option is disabled by default, and will only apply if set to > 0.
 The `max_value` setting removes pairs where the minimum value change is above a specified value.
 This is useful when an exchange has unbalanced limits. For example, if step-size = 1 (so you can only buy 1, or 2, or 3, but not 1.1 Coins) - and the price is pretty high (like 20\$) as the coin has risen sharply since the last limit adaption.
 As a result of the above, you can only buy for 20\$, or 40\$ - but not for 25\$.
-On exchanges that deduct fees from the receiving currency (e.g. FTX) - this can result in high value coins / amounts that are unsellable as the amount is slightly below the limit.
+On exchanges that deduct fees from the receiving currency (e.g. binance) - this can result in high value coins / amounts that are unsellable as the amount is slightly below the limit.
 
 The `low_price_ratio` setting removes pairs where a raise of 1 price unit (pip) is above the `low_price_ratio` ratio.
 This option is disabled by default, and will only apply if set to > 0.
@@ -285,6 +328,18 @@ Min price precision for SHITCOIN/BTC is 8 decimals. If its price is 0.00000011 -
 #### ShuffleFilter
 
 Shuffles (randomizes) pairs in the pairlist. It can be used for preventing the bot from trading some of the pairs more frequently then others when you want all pairs be treated with the same priority.
+
+By default, ShuffleFilter will shuffle pairs once per candle.
+To shuffle on every iteration, set `"shuffle_frequency"` to `"iteration"` instead of  the default of `"candle"`.
+
+``` json
+    {
+        "method": "ShuffleFilter", 
+        "shuffle_frequency": "candle",
+        "seed": 42
+    }
+
+```
 
 !!! Tip
     You may set the `seed` value for this Pairlist to obtain reproducible results, which can be useful for repeated backtesting sessions. If `seed` is not set, the pairs are shuffled in the non-repeatable random order. ShuffleFilter will automatically detect runmodes and apply the `seed` only for backtesting modes - if a `seed` value is set.

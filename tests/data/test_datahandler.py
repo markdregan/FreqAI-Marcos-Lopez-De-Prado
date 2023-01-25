@@ -1,6 +1,7 @@
 # pragma pylint: disable=missing-docstring, protected-access, C0103
 
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -32,10 +33,10 @@ def test_datahandler_ohlcv_get_pairs(testdatadir):
     assert set(pairs) == {'UNITTEST/BTC'}
 
     pairs = JsonDataHandler.ohlcv_get_pairs(testdatadir, '1h', candle_type=CandleType.MARK)
-    assert set(pairs) == {'UNITTEST/USDT', 'XRP/USDT'}
+    assert set(pairs) == {'UNITTEST/USDT:USDT', 'XRP/USDT:USDT'}
 
     pairs = JsonGzDataHandler.ohlcv_get_pairs(testdatadir, '1h', candle_type=CandleType.FUTURES)
-    assert set(pairs) == {'XRP/USDT'}
+    assert set(pairs) == {'XRP/USDT:USDT'}
 
     pairs = HDF5DataHandler.ohlcv_get_pairs(testdatadir, '1h', candle_type=CandleType.MARK)
     assert set(pairs) == {'UNITTEST/USDT:USDT'}
@@ -69,7 +70,7 @@ def test_datahandler_ohlcv_regex(filename, pair, timeframe, candletype):
     ('BTC_USDT_USDT', 'BTC/USDT:USDT'),  # Futures
     ('XRP_USDT_USDT', 'XRP/USDT:USDT'),  # futures
     ('BTC-PERP', 'BTC-PERP'),
-    ('BTC-PERP_USDT', 'BTC-PERP:USDT'),  # potential FTX case
+    ('BTC-PERP_USDT', 'BTC-PERP:USDT'),
     ('UNITTEST_USDT', 'UNITTEST/USDT'),
 ])
 def test_rebuild_pair_from_filename(input, expected):
@@ -103,11 +104,12 @@ def test_datahandler_ohlcv_get_available_data(testdatadir):
     paircombs = JsonDataHandler.ohlcv_get_available_data(testdatadir, TradingMode.FUTURES)
     # Convert to set to avoid failures due to sorting
     assert set(paircombs) == {
-        ('UNITTEST/USDT', '1h', 'mark'),
-        ('XRP/USDT', '1h', 'futures'),
-        ('XRP/USDT', '1h', 'mark'),
-        ('XRP/USDT', '8h', 'mark'),
-        ('XRP/USDT', '8h', 'funding_rate'),
+        ('UNITTEST/USDT:USDT', '1h', 'mark'),
+        ('XRP/USDT:USDT', '5m', 'futures'),
+        ('XRP/USDT:USDT', '1h', 'futures'),
+        ('XRP/USDT:USDT', '1h', 'mark'),
+        ('XRP/USDT:USDT', '8h', 'mark'),
+        ('XRP/USDT:USDT', '8h', 'funding_rate'),
     }
 
     paircombs = JsonGzDataHandler.ohlcv_get_available_data(testdatadir, TradingMode.SPOT)
@@ -141,7 +143,7 @@ def test_jsondatahandler_ohlcv_load(testdatadir, caplog):
     df = dh.ohlcv_load('XRP/ETH', '5m', 'spot')
     assert len(df) == 712
 
-    df_mark = dh.ohlcv_load('UNITTEST/USDT', '1h', candle_type="mark")
+    df_mark = dh.ohlcv_load('UNITTEST/USDT:USDT', '1h', candle_type="mark")
     assert len(df_mark) == 100
 
     df_no_mark = dh.ohlcv_load('UNITTEST/USDT', '1h', 'spot')
@@ -152,6 +154,23 @@ def test_jsondatahandler_ohlcv_load(testdatadir, caplog):
     assert len(df1) == 0
     assert log_has("Could not load data for NOPAIR/XXX.", caplog)
     assert df.columns.equals(df1.columns)
+
+
+def test_datahandler_ohlcv_data_min_max(testdatadir):
+    dh = JsonDataHandler(testdatadir)
+    min_max = dh.ohlcv_data_min_max('UNITTEST/BTC', '5m', 'spot')
+    assert len(min_max) == 2
+
+    # Empty pair
+    min_max = dh.ohlcv_data_min_max('UNITTEST/BTC', '8m', 'spot')
+    assert len(min_max) == 2
+    assert min_max[0] == datetime.fromtimestamp(0, tz=timezone.utc)
+    assert min_max[0] == min_max[1]
+    # Empty pair2
+    min_max = dh.ohlcv_data_min_max('NOPAIR/XXX', '4m', 'spot')
+    assert len(min_max) == 2
+    assert min_max[0] == datetime.fromtimestamp(0, tz=timezone.utc)
+    assert min_max[0] == min_max[1]
 
 
 def test_datahandler__check_empty_df(testdatadir, caplog):
@@ -406,7 +425,7 @@ def test_hdf5datahandler_ohlcv_load_and_resave(
     # Data goes from 2018-01-10 - 2018-01-30
     ('UNITTEST/BTC', '5m', 'spot',  '', '2018-01-15', '2018-01-19'),
     # Mark data goes from to 2021-11-15 2021-11-19
-    ('UNITTEST/USDT', '1h', 'mark', '-mark', '2021-11-16', '2021-11-18'),
+    ('UNITTEST/USDT:USDT', '1h', 'mark', '-mark', '2021-11-16', '2021-11-18'),
 ])
 @pytest.mark.parametrize('datahandler', ['hdf5', 'feather', 'parquet'])
 def test_generic_datahandler_ohlcv_load_and_resave(

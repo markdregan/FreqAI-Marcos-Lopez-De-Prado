@@ -3,18 +3,19 @@ import logging
 from pathlib import Path
 from shutil import copyfile
 
+import numpy as np
 import pytest
 
 from freqtrade.configuration.timerange import TimeRange
 from freqtrade.data.converter import (convert_ohlcv_format, convert_trades_format,
                                       ohlcv_fill_up_missing_data, ohlcv_to_dataframe,
-                                      trades_dict_to_list, trades_remove_duplicates,
-                                      trades_to_ohlcv, trim_dataframe)
+                                      reduce_dataframe_footprint, trades_dict_to_list,
+                                      trades_remove_duplicates, trades_to_ohlcv, trim_dataframe)
 from freqtrade.data.history import (get_timerange, load_data, load_pair_history,
                                     validate_backtest_data)
 from freqtrade.data.history.idatahandler import IDataHandler
 from freqtrade.enums import CandleType
-from tests.conftest import log_has, log_has_re
+from tests.conftest import generate_test_data, log_has, log_has_re
 from tests.data.test_history import _clean_test_file
 
 
@@ -293,8 +294,8 @@ def test_convert_trades_format(default_conf, testdatadir, tmpdir):
 
 @pytest.mark.parametrize('file_base,candletype', [
     (['XRP_ETH-5m', 'XRP_ETH-1m'], CandleType.SPOT),
-    (['UNITTEST_USDT-1h-mark', 'XRP_USDT-1h-mark'], CandleType.MARK),
-    (['XRP_USDT-1h-futures'], CandleType.FUTURES),
+    (['UNITTEST_USDT_USDT-1h-mark', 'XRP_USDT_USDT-1h-mark'], CandleType.MARK),
+    (['XRP_USDT_USDT-1h-futures'], CandleType.FUTURES),
 ])
 def test_convert_ohlcv_format(default_conf, testdatadir, tmpdir, file_base, candletype):
     tmpdir1 = Path(tmpdir)
@@ -314,7 +315,10 @@ def test_convert_ohlcv_format(default_conf, testdatadir, tmpdir, file_base, cand
         files_new.append(file_new)
 
     default_conf['datadir'] = tmpdir1
-    default_conf['pairs'] = ['XRP_ETH', 'XRP_USDT', 'UNITTEST_USDT']
+    if candletype == CandleType.SPOT:
+        default_conf['pairs'] = ['XRP/ETH', 'XRP/USDT', 'UNITTEST/USDT']
+    else:
+        default_conf['pairs'] = ['XRP/ETH:ETH', 'XRP/USDT:USDT', 'UNITTEST/USDT:USDT']
     default_conf['timeframes'] = ['1m', '5m', '1h']
 
     assert not file_new.exists()
@@ -344,3 +348,33 @@ def test_convert_ohlcv_format(default_conf, testdatadir, tmpdir, file_base, cand
         assert file.exists()
     for file in (files_new):
         assert not file.exists()
+
+
+def test_reduce_dataframe_footprint():
+    data = generate_test_data('15m', 40)
+
+    data['open_copy'] = data['open']
+    data['close_copy'] = data['close']
+    data['close_copy'] = data['close']
+
+    assert data['open'].dtype == np.float64
+    assert data['open_copy'].dtype == np.float64
+    assert data['close_copy'].dtype == np.float64
+
+    df2 = reduce_dataframe_footprint(data)
+
+    # Does not modify original dataframe
+    assert data['open'].dtype == np.float64
+    assert data['open_copy'].dtype == np.float64
+    assert data['close_copy'].dtype == np.float64
+
+    # skips ohlcv columns
+    assert df2['open'].dtype == np.float64
+    assert df2['high'].dtype == np.float64
+    assert df2['low'].dtype == np.float64
+    assert df2['close'].dtype == np.float64
+    assert df2['volume'].dtype == np.float64
+
+    # Changes dtype of returned dataframe
+    assert df2['open_copy'].dtype == np.float32
+    assert df2['close_copy'].dtype == np.float32

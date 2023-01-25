@@ -28,7 +28,7 @@ class Configuration:
     Reuse this class for the bot, backtesting, hyperopt and every script that required configuration
     """
 
-    def __init__(self, args: Dict[str, Any], runmode: RunMode = None) -> None:
+    def __init__(self, args: Dict[str, Any], runmode: Optional[RunMode] = None) -> None:
         self.args = args
         self.config: Optional[Config] = None
         self.runmode = runmode
@@ -279,6 +279,9 @@ class Configuration:
         self._args_to_config(config, argname='disableparamexport',
                              logstring='Parameter --disableparamexport detected: {} ...')
 
+        self._args_to_config(config, argname='freqai_backtest_live_models',
+                             logstring='Parameter --freqai-backtest-live-models detected ...')
+
         # Edge section:
         if 'stoploss_range' in self.args and self.args["stoploss_range"]:
             txt_range = eval(self.args["stoploss_range"])
@@ -458,6 +461,9 @@ class Configuration:
 
         self._args_to_config(config, argname='indicator_list',
                              logstring='Analysis indicator list: {}')
+
+        self._args_to_config(config, argname='timerange',
+                             logstring='Filter trades by timerange: {}')
 
     def _process_runmode(self, config: Config) -> None:
 

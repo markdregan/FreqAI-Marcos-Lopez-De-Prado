@@ -746,9 +746,7 @@ def test_download_data_no_exchange(mocker, caplog):
         start_download_data(pargs)
 
 
-def test_download_data_no_pairs(mocker, caplog):
-
-    mocker.patch.object(Path, "exists", MagicMock(return_value=False))
+def test_download_data_no_pairs(mocker):
 
     mocker.patch('freqtrade.commands.data_commands.refresh_backtest_ohlcv_data',
                  MagicMock(return_value=["ETH/BTC", "XRP/BTC"]))
@@ -769,8 +767,6 @@ def test_download_data_no_pairs(mocker, caplog):
 
 
 def test_download_data_all_pairs(mocker, markets):
-
-    mocker.patch.object(Path, "exists", MagicMock(return_value=False))
 
     dl_mock = mocker.patch('freqtrade.commands.data_commands.refresh_backtest_ohlcv_data',
                            MagicMock(return_value=["ETH/BTC", "XRP/BTC"]))
@@ -1271,7 +1267,7 @@ def test_hyperopt_list(mocker, capsys, caplog, saved_hyperopt_results, tmpdir):
     assert csv_file.is_file()
     line = csv_file.read_text()
     assert ('Best,1,2,-1.25%,-1.2222,-0.00125625,,-2.51,"3,930.0 m",0.43662' in line
-            or "Best,1,2,-1.25%,-1.2222,-0.00125625,,-2.51,2 days 17:30:00,0.43662" in line)
+            or "Best,1,2,-1.25%,-1.2222,-0.00125625,,-2.51,2 days 17:30:00,2,0,0.43662" in line)
     csv_file.unlink()
 
 
@@ -1454,10 +1450,10 @@ def test_start_list_data(testdatadir, capsys):
     start_list_data(pargs)
     captured = capsys.readouterr()
 
-    assert "Found 5 pair / timeframe combinations." in captured.out
-    assert "\n|          Pair |   Timeframe |         Type |\n" in captured.out
-    assert "\n|      XRP/USDT |          1h |      futures |\n" in captured.out
-    assert "\n|      XRP/USDT |      1h, 8h |         mark |\n" in captured.out
+    assert "Found 6 pair / timeframe combinations." in captured.out
+    assert "\n|               Pair |   Timeframe |         Type |\n" in captured.out
+    assert "\n|      XRP/USDT:USDT |      5m, 1h |      futures |\n" in captured.out
+    assert "\n|      XRP/USDT:USDT |      1h, 8h |         mark |\n" in captured.out
 
     args = [
         "list-data",
@@ -1529,7 +1525,7 @@ def test_backtesting_show(mocker, testdatadir, capsys):
     args = [
         "backtesting-show",
         "--export-filename",
-        f"{testdatadir / 'backtest_results/backtest-result_new.json'}",
+        f"{testdatadir / 'backtest_results/backtest-result.json'}",
         "--show-pair-list"
     ]
     pargs = get_args(args)

@@ -8,9 +8,10 @@ from pandas import DataFrame, to_datetime
 from tabulate import tabulate
 
 from freqtrade.constants import (DATETIME_PRINT_FORMAT, LAST_BT_RESULT_FN, UNLIMITED_STAKE_AMOUNT,
-                                 Config)
-from freqtrade.data.metrics import (calculate_cagr, calculate_csum, calculate_market_change,
-                                    calculate_max_drawdown)
+                                 Config, IntOrInf)
+from freqtrade.data.metrics import (calculate_cagr, calculate_calmar, calculate_csum,
+                                    calculate_expectancy, calculate_market_change,
+                                    calculate_max_drawdown, calculate_sharpe, calculate_sortino)
 from freqtrade.misc import decimals_per_coin, file_dump_joblib, file_dump_json, round_coin_value
 from freqtrade.optimize.backtest_caching import get_backtest_metadata_filename
 
@@ -86,7 +87,7 @@ def _get_line_header(first_column: str, stake_currency: str,
             'Win  Draw  Loss  Win%']
 
 
-def _generate_wins_draws_losses(wins, draws, losses):
+def generate_wins_draws_losses(wins, draws, losses):
     if wins > 0 and losses == 0:
         wl_ratio = '100'
     elif wins == 0:
@@ -190,7 +191,7 @@ def generate_tag_metrics(tag_type: str,
         return []
 
 
-def generate_exit_reason_stats(max_open_trades: int, results: DataFrame) -> List[Dict]:
+def generate_exit_reason_stats(max_open_trades: IntOrInf, results: DataFrame) -> List[Dict]:
     """
     Generate small table outlining Backtest results
     :param max_open_trades: Max_open_trades parameter
@@ -448,6 +449,10 @@ def generate_strategy_stats(pairlist: List[str],
         'profit_total_long_abs': results.loc[~results['is_short'], 'profit_abs'].sum(),
         'profit_total_short_abs': results.loc[results['is_short'], 'profit_abs'].sum(),
         'cagr': calculate_cagr(backtest_days, start_balance, content['final_balance']),
+        'expectancy': calculate_expectancy(results),
+        'sortino': calculate_sortino(results, min_date, max_date, start_balance),
+        'sharpe': calculate_sharpe(results, min_date, max_date, start_balance),
+        'calmar': calculate_calmar(results, min_date, max_date, start_balance),
         'profit_factor': profit_factor,
         'backtest_start': min_date.strftime(DATETIME_PRINT_FORMAT),
         'backtest_start_ts': int(min_date.timestamp() * 1000),
@@ -600,7 +605,7 @@ def text_table_bt_results(pair_results: List[Dict[str, Any]], stake_currency: st
     output = [[
         t['key'], t['trades'], t['profit_mean_pct'], t['profit_sum_pct'], t['profit_total_abs'],
         t['profit_total_pct'], t['duration_avg'],
-        _generate_wins_draws_losses(t['wins'], t['draws'], t['losses'])
+        generate_wins_draws_losses(t['wins'], t['draws'], t['losses'])
     ] for t in pair_results]
     # Ignore type as floatfmt does allow tuples but mypy does not know that
     return tabulate(output, headers=headers,
@@ -626,7 +631,7 @@ def text_table_exit_reason(exit_reason_stats: List[Dict[str, Any]], stake_curren
 
     output = [[
         t.get('exit_reason', t.get('sell_reason')), t['trades'],
-        _generate_wins_draws_losses(t['wins'], t['draws'], t['losses']),
+        generate_wins_draws_losses(t['wins'], t['draws'], t['losses']),
         t['profit_mean_pct'], t['profit_sum_pct'],
         round_coin_value(t['profit_total_abs'], stake_currency, False),
         t['profit_total_pct'],
@@ -656,7 +661,7 @@ def text_table_tags(tag_type: str, tag_results: List[Dict[str, Any]], stake_curr
             t['profit_total_abs'],
             t['profit_total_pct'],
             t['duration_avg'],
-            _generate_wins_draws_losses(
+            generate_wins_draws_losses(
                 t['wins'],
                 t['draws'],
                 t['losses'])] for t in tag_results]
@@ -715,7 +720,7 @@ def text_table_strategy(strategy_results, stake_currency: str) -> str:
     output = [[
         t['key'], t['trades'], t['profit_mean_pct'], t['profit_sum_pct'], t['profit_total_abs'],
         t['profit_total_pct'], t['duration_avg'],
-        _generate_wins_draws_losses(t['wins'], t['draws'], t['losses']), drawdown]
+        generate_wins_draws_losses(t['wins'], t['draws'], t['losses']), drawdown]
         for t, drawdown in zip(strategy_results, drawdown)]
     # Ignore type as floatfmt does allow tuples but mypy does not know that
     return tabulate(output, headers=headers,
@@ -785,8 +790,13 @@ def text_table_add_metrics(strat_results: Dict) -> str:
                                                   strat_results['stake_currency'])),
             ('Total profit %', f"{strat_results['profit_total']:.2%}"),
             ('CAGR %', f"{strat_results['cagr']:.2%}" if 'cagr' in strat_results else 'N/A'),
+            ('Sortino', f"{strat_results['sortino']:.2f}" if 'sortino' in strat_results else 'N/A'),
+            ('Sharpe', f"{strat_results['sharpe']:.2f}" if 'sharpe' in strat_results else 'N/A'),
+            ('Calmar', f"{strat_results['calmar']:.2f}" if 'calmar' in strat_results else 'N/A'),
             ('Profit factor', f'{strat_results["profit_factor"]:.2f}' if 'profit_factor'
                               in strat_results else 'N/A'),
+            ('Expectancy', f"{strat_results['expectancy']:.2f}" if 'expectancy'
+                           in strat_results else 'N/A'),
             ('Trades per day', strat_results['trades_per_day']),
             ('Avg. daily profit %',
              f"{(strat_results['profit_total'] / strat_results['backtest_days']):.2%}"),

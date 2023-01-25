@@ -15,6 +15,19 @@ freqai = [
     'scikit-learn',
     'catboost; platform_machine != "aarch64"',
     'lightgbm',
+    'xgboost'
+]
+
+freqai_rl = [
+    'torch',
+    'stable-baselines3',
+    'gym==0.21',
+    'sb3-contrib'
+]
+
+hdf5 = [
+    'tables',
+    'blosc',
 ]
 
 develop = [
@@ -36,7 +49,7 @@ jupyter = [
     'nbconvert',
 ]
 
-all_extra = plot + develop + jupyter + hyperopt + freqai
+all_extra = plot + develop + jupyter + hyperopt + hdf5 + freqai + freqai_rl
 
 setup(
     tests_require=[
@@ -47,7 +60,7 @@ setup(
     ],
     install_requires=[
         # from requirements.txt
-        'ccxt>=1.92.9',
+        'ccxt>=2.6.26',
         'SQLAlchemy',
         'python-telegram-bot>=13.4',
         'arrow>=0.17.0',
@@ -70,8 +83,6 @@ setup(
         'prompt-toolkit',
         'numpy',
         'pandas',
-        'tables',
-        'blosc',
         'joblib>=1.2.0',
         'pyarrow; platform_machine != "armv7l"',
         'fastapi',
@@ -89,7 +100,9 @@ setup(
         'plot': plot,
         'jupyter': jupyter,
         'hyperopt': hyperopt,
+        'hdf5': hdf5,
         'freqai': freqai,
+        'freqai_rl': freqai_rl,
         'all': all_extra,
     },
 )

@@ -17,6 +17,7 @@ from freqtrade.enums import HyperoptState
 from freqtrade.exceptions import OperationalException
 from freqtrade.misc import deep_merge_dicts, round_coin_value, round_dict, safe_value_fallback2
 from freqtrade.optimize.hyperopt_epoch_filters import hyperopt_filter_epochs
+from freqtrade.optimize.optimize_reports import generate_wins_draws_losses
 
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,7 @@ class HyperoptTools():
         Tell if the space value is contained in the configuration
         """
         # 'trailing' and 'protection spaces are not included in the 'default' set of spaces
-        if space in ('trailing', 'protection'):
+        if space in ('trailing', 'protection', 'trades'):
             return any(s in config['spaces'] for s in [space, 'all'])
         else:
             return any(s in config['spaces'] for s in [space, 'all', 'default'])
@@ -169,7 +170,7 @@ class HyperoptTools():
 
     @staticmethod
     def show_epoch_details(results, total_epochs: int, print_json: bool,
-                           no_header: bool = False, header_str: str = None) -> None:
+                           no_header: bool = False, header_str: Optional[str] = None) -> None:
         """
         Display details of the hyperopt result
         """
@@ -186,7 +187,8 @@ class HyperoptTools():
 
         if print_json:
             result_dict: Dict = {}
-            for s in ['buy', 'sell', 'protection', 'roi', 'stoploss', 'trailing']:
+            for s in ['buy', 'sell', 'protection',
+                      'roi', 'stoploss', 'trailing', 'max_open_trades']:
                 HyperoptTools._params_update_for_json(result_dict, params, non_optimized, s)
             print(rapidjson.dumps(result_dict, default=str, number_mode=rapidjson.NM_NATIVE))
 
@@ -200,6 +202,8 @@ class HyperoptTools():
             HyperoptTools._params_pretty_print(params, 'roi', "ROI table:", non_optimized)
             HyperoptTools._params_pretty_print(params, 'stoploss', "Stoploss:", non_optimized)
             HyperoptTools._params_pretty_print(params, 'trailing', "Trailing stop:", non_optimized)
+            HyperoptTools._params_pretty_print(
+                params, 'max_open_trades', "Max Open Trades:", non_optimized)
 
     @staticmethod
     def _params_update_for_json(result_dict, params, non_optimized, space: str) -> None:
@@ -238,7 +242,9 @@ class HyperoptTools():
             if space == "stoploss":
                 stoploss = safe_value_fallback2(space_params, no_params, space, space)
                 result += (f"stoploss = {stoploss}{appendix}")
-
+            elif space == "max_open_trades":
+                max_open_trades = safe_value_fallback2(space_params, no_params, space, space)
+                result += (f"max_open_trades = {max_open_trades}{appendix}")
             elif space == "roi":
                 result = result[:-1] + f'{appendix}\n'
                 minimal_roi_result = rapidjson.dumps({
@@ -258,7 +264,7 @@ class HyperoptTools():
             print(result)
 
     @staticmethod
-    def _space_params(params, space: str, r: int = None) -> Dict:
+    def _space_params(params, space: str, r: Optional[int] = None) -> Dict:
         d = params.get(space)
         if d:
             # Round floats to `r` digits after the decimal point if requested
@@ -325,8 +331,10 @@ class HyperoptTools():
 
         # New mode, using backtest result for metrics
         trials['results_metrics.winsdrawslosses'] = trials.apply(
-            lambda x: f"{x['results_metrics.wins']} {x['results_metrics.draws']:>4} "
-                      f"{x['results_metrics.losses']:>4}", axis=1)
+            lambda x: generate_wins_draws_losses(
+                            x['results_metrics.wins'], x['results_metrics.draws'],
+                            x['results_metrics.losses']
+                      ), axis=1)
 
         trials = trials[['Best', 'current_epoch', 'results_metrics.total_trades',
                          'results_metrics.winsdrawslosses',
@@ -337,7 +345,7 @@ class HyperoptTools():
                          'loss', 'is_initial_point', 'is_random', 'is_best']]
 
         trials.columns = [
-            'Best', 'Epoch', 'Trades', ' Win Draw Loss', 'Avg profit',
+            'Best', 'Epoch', 'Trades', ' Win  Draw  Loss  Win%', 'Avg profit',
             'Total profit', 'Profit', 'Avg duration', 'max_drawdown', 'max_drawdown_account',
             'max_drawdown_abs', 'Objective', 'is_initial_point', 'is_random', 'is_best'
             ]
@@ -467,9 +475,9 @@ class HyperoptTools():
 
         base_metrics = ['Best', 'current_epoch', 'results_metrics.total_trades',
                         'results_metrics.profit_mean', 'results_metrics.profit_median',
-                        'results_metrics.profit_total',
-                        'Stake currency',
+                        'results_metrics.profit_total', 'Stake currency',
                         'results_metrics.profit_total_abs', 'results_metrics.holding_avg',
+                        'results_metrics.trade_count_long', 'results_metrics.trade_count_short',
                         'loss', 'is_initial_point', 'is_best']
         perc_multi = 100
 
@@ -477,7 +485,9 @@ class HyperoptTools():
         trials = trials[base_metrics + param_metrics]
 
         base_columns = ['Best', 'Epoch', 'Trades', 'Avg profit', 'Median profit', 'Total profit',
-                        'Stake currency', 'Profit', 'Avg duration', 'Objective',
+                        'Stake currency', 'Profit', 'Avg duration',
+                        'Trade count long', 'Trade count short',
+                        'Objective',
                         'is_initial_point', 'is_best']
         param_columns = list(results[0]['params_dict'].keys())
         trials.columns = base_columns + param_columns
