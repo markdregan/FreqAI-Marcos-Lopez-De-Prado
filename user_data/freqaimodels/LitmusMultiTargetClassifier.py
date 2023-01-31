@@ -15,8 +15,9 @@ from freqtrade.litmus.model_helpers import MergedModel
 from freqtrade.litmus.db_helpers import save_df_to_db
 from optuna.integration import CatBoostPruningCallback
 from pandas import DataFrame
-from sklearn.metrics import precision_recall_curve
-from sklearn.preprocessing import LabelBinarizer
+from pathlib import Path
+# from sklearn.metrics import precision_recall_curve
+# from sklearn.preprocessing import LabelBinarizer
 from sklearn.ensemble import RandomForestClassifier
 from time import time
 from typing import Any, Dict, Tuple
@@ -132,6 +133,25 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             X_test = data_dictionary["train_features"]
             y_test = data_dictionary["train_labels"][t]
             weight_test = data_dictionary["train_weights"]
+
+            # Drop rows for meta-model to align with primary entries only
+            if self.freqai_info["feature_selection"]["drop_rows_meta_model"].get("enabled", False):
+                # Boolean mask for rows to keep (True)
+                train_row_keep = np.where(y_train == "drop-row", False, True)
+                test_row_keep = np.where(y_test == "drop-row", False, True)
+
+                # Drop rows
+                X_train = X_train[train_row_keep]
+                y_train = y_train[train_row_keep]
+                weight_train = weight_train[train_row_keep]
+                X_test = X_test[test_row_keep]
+                y_test = y_test[test_row_keep]
+                weight_test = weight_test[test_row_keep]
+
+                logger.info(f"Meta-model prep: Dropped {len(train_row_keep)} rows from train data."
+                            f"{len(y_train)} remaining.")
+                logger.info(f"Meta-model prep: Dropped {len(test_row_keep)} rows from test data."
+                            f"{len(y_test)} remaining.")
 
             # Drop High PSI Features
             if self.freqai_info["feature_selection"]["psi_elimination"].get("enabled", False):
@@ -267,7 +287,8 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             )
 
             model = CatBoostClassifier(
-                **self.model_training_parameters
+                **self.model_training_parameters,
+                train_dir=Path(dk.data_path),
             )
 
             # Feature reduction using catboost routine
@@ -404,7 +425,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             total_time = end_time - start_time
             dk.data["extra_returns_per_train"]["total_time"] = total_time
 
-            # Model performance metrics
+            """# Model performance metrics
             encoder = LabelBinarizer()
             encoder.fit(y_train)
             y_test_enc = encoder.transform(y_test)
@@ -418,9 +439,9 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 max_f1 = np.max(f1_scores)
                 max_f1_thresh = thresholds[np.argmax(f1_scores)]
 
-                return max_f1, max_f1_thresh
+                return max_f1, max_f1_thresh"""
 
-            # Model performance metrics
+            """# Model performance metrics
             for i, c in enumerate(encoder.classes_):
                 # Max F1 Score and Optimum threshold
                 precision, recall, thresholds = precision_recall_curve(
@@ -434,17 +455,15 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 max_fbeta_exit, fbeta_exit_thresh = optimum_f1(
                     precision, recall, thresholds, beta=fbeta_exit)
 
-                dk.data["extra_returns_per_train"][f"max_fbeta_entry_{c}_{t}"] = max_fbeta_entry
-                dk.data["extra_returns_per_train"][f"max_fbeta_exit_{c}_{t}"] = max_fbeta_exit
-                dk.data["extra_returns_per_train"][f"fbeta_entry_thresh_{c}_{t}"] = (
-                    fbeta_entry_thresh
-                )
-                dk.data["extra_returns_per_train"][f"fbeta_exit_thresh_{c}_{t}"] = fbeta_exit_thresh
+                dk.data["extra_returns_per_train"][f"max_fbeta_entry_{c}"] = max_fbeta_entry
+                dk.data["extra_returns_per_train"][f"max_fbeta_exit_{c}"] = max_fbeta_exit
+                dk.data["extra_returns_per_train"][f"fbeta_entry_thresh_{c}"] = fbeta_entry_thresh
+                dk.data["extra_returns_per_train"][f"fbeta_exit_thresh_{c}"] = fbeta_exit_thresh
 
                 logger.info(f"{c} - Max FBeta exit score: {max_fbeta_exit}")
                 logger.info(f"{c} - Max FBeta entry score: {max_fbeta_entry}")
                 logger.info(f"{c} - Optimum Threshold FBeta exit score: {fbeta_exit_thresh}")
-                logger.info(f"{c} - Optimum Threshold FBeta entry score: {fbeta_entry_thresh}")
+                logger.info(f"{c} - Optimum Threshold FBeta entry score: {fbeta_entry_thresh}")"""
 
             models.append(model)
 

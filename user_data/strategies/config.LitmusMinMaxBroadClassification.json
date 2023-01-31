@@ -24,12 +24,13 @@
             "rateLimit": 200
         },
         "pair_whitelist": [
-            "ZEC/USDT",
-            "VET/USDT",
-            "DOGE/USDT",
-            "1INCH/USDT",
-            "ADA/USDT",
-            "SNX/USDT"
+            "MATIC/USDT:USDT",
+            "ZEC/USDT:USDT",
+            "VET/USDT:USDT",
+            "DOGE/USDT:USDT",
+            "1INCH/USDT:USDT",
+            "ADA/USDT:USDT",
+            "SNX/USDT:USDT"
         ],
         "pair_blacklist": []
     },
@@ -70,7 +71,7 @@
         "backtest_period_days": 0.5,
         "fit_live_predictions_candles": 0,
         "identifier": "LitmusMinMaxBroadClassifier",
-        "fixed_leverage": 3,
+        "fixed_leverage": 1,
         "feature_parameters": {
             "include_timeframes": [
                 "3m",
@@ -78,13 +79,14 @@
                 "2h"
             ],
             "include_corr_pairlist": [
-                "BTC/USDT"
+                "BTC/USDT:USDT"
             ],
             "label_period_candles": 0,
-            "include_shifted_candles": 2,
+            "include_shifted_candles": 4,
             "DI_threshold": 1.9,
             "weight_factor": 0.7,
             "principal_component_analysis": false,
+            "plot_feature_importances": 1,
             "use_SVM_to_remove_outliers": true,
             "svm_params": {
                 "shuffle": false,
@@ -93,7 +95,6 @@
             "use_DBSCAN_to_remove_outliers": true,
             "inlier_metric_window": 40,
             "stratify_training_data": 0,
-            "indicator_max_period_candles": 200,
             "indicator_periods_candles": [10, 20, 50, 100],
             "noise_standard_deviation": 0.05,
             "reverse_train_test_order": false
@@ -150,11 +151,11 @@
             "shuffle": false
         },
         "labeling_parameters": {
-            "zigzag_min_growth": [0.01, 0.005],
-            "nearby_threshold": [0.003, 0.002],
+            "zigzag_min_growth": [0.01, 0.01],
+            "nearby_threshold": [0.003, 0.005],
             "forward_pass": [true, true],
             "reverse_pass": [false, false],
-            "target_offset": [0, 0]
+            "target_offset": [0, 1]
         },
         "trigger_parameters": {
             "fbeta_entry": 1,
@@ -167,32 +168,32 @@
             "early_stopping_rounds": 200,
             "task_type": "CPU",
             "verbose": 50,
-            "allow_writing_files": false
+            "allow_writing_files": true
         },
         "extra_returns_per_train": {
             "total_time": 0,
             "num_trees_&target_0": 0,
             "num_trees_&target_1": 0,
-            "max_fbeta_entry_maxima_0_&target_0": 0,
-            "max_fbeta_exit_maxima_0_&target_0": 0,
-            "max_fbeta_entry_minima_0_&target_0": 0,
-            "max_fbeta_exit_minima_0_&target_0": 0,
-            "max_fbeta_entry_maxima_1_&target_1": 0,
-            "max_fbeta_exit_maxima_1_&target_1": 0,
-            "max_fbeta_entry_minima_1_&target_1": 0,
-            "max_fbeta_exit_minima_1_&target_1": 0,
-            "fbeta_exit_thresh_maxima_0_&target_0": 0,
-            "fbeta_entry_thresh_maxima_0_&target_0": 0,
-            "fbeta_exit_thresh_minima_0_&target_0": 0,
-            "fbeta_entry_thresh_minima_0_&target_0": 0,
-            "fbeta_exit_thresh_maxima_1_&target_1": 0,
-            "fbeta_entry_thresh_maxima_1_&target_1": 0,
-            "fbeta_exit_thresh_minima_1_&target_1": 0,
-            "fbeta_entry_thresh_minima_1_&target_1": 0
+            "max_fbeta_entry_maxima_0": 0,
+            "max_fbeta_exit_maxima_0": 0,
+            "max_fbeta_entry_minima_0": 0,
+            "max_fbeta_exit_minima_0": 0,
+            "max_fbeta_entry_maxima_1": 0,
+            "max_fbeta_exit_maxima_1": 0,
+            "max_fbeta_entry_minima_1": 0,
+            "max_fbeta_exit_minima_1": 0,
+            "fbeta_exit_thresh_maxima_0": 0,
+            "fbeta_entry_thresh_maxima_0": 0,
+            "fbeta_exit_thresh_minima_0": 0,
+            "fbeta_entry_thresh_minima_0": 0,
+            "fbeta_exit_thresh_maxima_1": 0,
+            "fbeta_entry_thresh_maxima_1": 0,
+            "fbeta_exit_thresh_minima_1": 0,
+            "fbeta_entry_thresh_minima_1": 0
         }
     },
     "telegram": {
-        "enabled": true,
+        "enabled": false,
         "token": "5012333300:AAFiwgqakXFwAsDBLqgXDLTnWqQCMBsYbK4",
         "chat_id": "1963068189"
     },

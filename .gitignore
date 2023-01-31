@@ -15,6 +15,7 @@ freqtrade-plot.html
 freqtrade-profit-plot.html
 freqtrade/rpc/api_server/ui/*
 build_helpers/ta-lib/*
+**/catboost_info/
 
 # Macos related
 .DS_Store
