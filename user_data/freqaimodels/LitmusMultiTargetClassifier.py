@@ -2,7 +2,6 @@
 import logging
 import numpy as np
 import numpy.typing as npt
-import optuna
 import pandas as pd
 
 from BorutaShap import BorutaShap
@@ -11,13 +10,11 @@ from feature_engine.selection import (SmartCorrelatedSelection, RecursiveFeature
                                       DropHighPSIFeatures, DropCorrelatedFeatures)
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
-from freqtrade.litmus.model_helpers import MergedModel
+from freqtrade.litmus.model_helpers import MergedModel, exclude_weak_features
 from freqtrade.litmus.db_helpers import save_df_to_db
-from optuna.integration import CatBoostPruningCallback
 from pandas import DataFrame
 from pathlib import Path
-# from sklearn.metrics import precision_recall_curve
-# from sklearn.preprocessing import LabelBinarizer
+from sklearn.metrics import precision_recall_curve
 from sklearn.ensemble import RandomForestClassifier
 from time import time
 from typing import Any, Dict, Tuple
@@ -134,24 +131,24 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             y_test = data_dictionary["train_labels"][t]
             weight_test = data_dictionary["train_weights"]
 
-            # Drop rows for meta-model to align with primary entries only
-            if self.freqai_info["feature_selection"]["drop_rows_meta_model"].get("enabled", False):
-                # Boolean mask for rows to keep (True)
-                train_row_keep = np.where(y_train == "drop-row", False, True)
-                test_row_keep = np.where(y_test == "drop-row", False, True)
+            # Drop low performing features based on prior training experiences
+            if self.freqai_info["feature_selection"]["drop_weak_features"].get("enabled", False):
+                weak_params = self.freqai_info["feature_selection"]["drop_weak_features"]
 
-                # Drop rows
-                X_train = X_train[train_row_keep]
-                y_train = y_train[train_row_keep]
-                weight_train = weight_train[train_row_keep]
-                X_test = X_test[test_row_keep]
-                y_test = y_test[test_row_keep]
-                weight_test = weight_test[test_row_keep]
+                drop_table = exclude_weak_features(
+                    model=t, pair=dk.pair, loss_ratio_threshold=weak_params["loss_ratio_threshold"],
+                    chance_excluded=weak_params["chance_excluded"],
+                    min_num_trials=weak_params["min_num_trials"])
 
-                logger.info(f"Meta-model prep: Dropped {len(train_row_keep)} rows from train data."
-                            f"{len(y_train)} remaining.")
-                logger.info(f"Meta-model prep: Dropped {len(test_row_keep)} rows from test data."
-                            f"{len(y_test)} remaining.")
+                cols_to_drop = drop_table["feature_id"].to_numpy()
+
+                num_cols_before = len(X_train.columns)
+                X_train = X_train.drop(columns=cols_to_drop, errors="ignore")
+                X_test = X_test.drop(columns=cols_to_drop, errors="ignore")
+                num_cols_after = len(X_train.columns)
+
+                logger.info(f"Dropping {num_cols_before-num_cols_after} weak features "
+                            f"based on prior training")
 
             # Drop High PSI Features
             if self.freqai_info["feature_selection"]["psi_elimination"].get("enabled", False):
@@ -198,6 +195,25 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 logger.info(f"Dropping {num_dropped} correlated features using greedy. "
                             f"{num_remaining} remaining.")
 
+            # Drop rows for meta-model to align with primary entries only
+            if self.freqai_info["feature_selection"]["drop_rows_meta_model"].get("enabled", False):
+                # Boolean mask for rows to keep (True)
+                train_row_keep = np.where(y_train == "drop-row", False, True)
+                test_row_keep = np.where(y_test == "drop-row", False, True)
+
+                # Drop rows
+                X_train = X_train[train_row_keep]
+                y_train = y_train[train_row_keep]
+                weight_train = weight_train[train_row_keep]
+                X_test = X_test[test_row_keep]
+                y_test = y_test[test_row_keep]
+                weight_test = weight_test[test_row_keep]
+
+                logger.info(f"Meta-model prep: Dropped {len(train_row_keep)} rows from train data. "
+                            f"{len(y_train)} remaining.")
+                logger.info(f"Meta-model prep: Dropped {len(test_row_keep)} rows from test data. "
+                            f"{len(y_test)} remaining.")
+
             # Drop features using Smart Correlated Selection
             if self.freqai_info["feature_selection"]["smart_selection"].get("enabled", False):
                 num_feat = len(X_train.columns)
@@ -241,7 +257,8 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                     normalize=boruta_params["normalize"], verbose=boruta_params["verbose"])
 
                 # Incase there are undecided features
-                boruta_selector.TentativeRoughFix()
+                if boruta_params.get("drop_tentative", False):
+                    boruta_selector.TentativeRoughFix()
 
                 X_train = boruta_selector.Subset()
                 X_test = X_test.loc[:, X_train.columns]
@@ -321,81 +338,6 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                     weight=weight_test
                 )
 
-            # Hyper parameter optimization
-            if self.freqai_info["optuna_parameters"].get("enabled", False):
-                logger.info("Starting optuna hyper parameter optimization routine")
-
-                def objective(trial: optuna.Trial) -> float:
-                    param = {
-                        "colsample_bylevel": trial.suggest_float("colsample_bylevel", 0.01, 0.1),
-                        "depth": trial.suggest_int("depth", 1, 12),
-                        "boosting_type": trial.suggest_categorical(
-                            "boosting_type", ["Ordered", "Plain"]),
-                        "bootstrap_type": trial.suggest_categorical(
-                            "bootstrap_type", ["Bayesian", "Bernoulli", "MVS"]
-                        ),
-                    }
-
-                    # Add additional static params from config
-                    param.update(self.freqai_info["model_training_parameters"])
-
-                    if param["bootstrap_type"] == "Bayesian":
-                        param["bagging_temperature"] = trial.suggest_float(
-                            "bagging_temperature", 0, 10)
-                    elif param["bootstrap_type"] == "Bernoulli":
-                        param["subsample"] = trial.suggest_float("subsample", 0.1, 1)
-
-                    optuna_model = CatBoostClassifier(**param)
-
-                    pruning_callback = CatBoostPruningCallback(trial, "MultiClassOneVsAll")
-                    optuna_model.fit(
-                        X=train_data,
-                        eval_set=eval_data,
-                        verbose=0,
-                        callbacks=[pruning_callback])
-
-                    # evoke pruning manually.
-                    pruning_callback.check_pruned()
-
-                    best_score = optuna_model.get_best_score()["validation"]["MultiClassOneVsAll"]
-
-                    return best_score
-
-                # Define name and storage of optuna study
-                study_name = f"{t}_{dk.pair}"
-                storage_name = "sqlite:///LitmusOptunaStudy.sqlite"
-
-                # Load prior optuna trials (if they exist) create new study otherwise
-                study = optuna.create_study(
-                    storage=storage_name,
-                    pruner=optuna.pruners.MedianPruner(n_warmup_steps=5),
-                    study_name=study_name,
-                    direction="minimize",
-                    load_if_exists=True
-                )
-
-                # Check latest trial timestamp & re-run if too old
-                try:
-                    latest_trial = study.trials_dataframe()["datetime_complete"].max()
-                    logger.info(f"Latest optuna trial found {latest_trial}")
-                    optuna_refresh = self.freqai_info["optuna_parameters"].get(
-                        "optuna_refresh", "2:00:00")
-                    # if latest delta > 10
-                    if latest_trial < pd.Timestamp.now() - pd.Timedelta(optuna_refresh):
-                        # Run a new study (delete old study results first)
-                        logger.info("Latest optuna study too old. Running new study")
-                        optuna.delete_study(study_name, storage_name)
-                        study.optimize(objective, n_trials=100, timeout=600)
-                except NameError:
-                    # No optuna study exists - run for first time
-                    logger.info("No optuna study found. Running new optuna study.")
-                    study.optimize(objective, n_trials=100, timeout=600)
-
-                # Retrieve the best params & update model params
-                best_params = study.best_params
-                logger.info(f"Optuna found best params for {t} {dk.pair}: {best_params}")
-                model.set_params(**best_params)
-
             # Train final model
             init_model = self.get_init_model(dk.pair)
             model.fit(X=train_data, eval_set=eval_data, init_model=init_model)
@@ -403,11 +345,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             dk.data["extra_returns_per_train"][f"num_trees_{t}"] = model.tree_count_
 
             # Compute feature importance & save to db
-            pct_enabled = self.freqai_info["feature_selection"]["save_feature_importance"].get(
-                "pct_enabled", 0)
-            rand = np.random.random()
-            if rand < pct_enabled:
-                logger.info(f"Feature importance triggered with {rand} < {pct_enabled}")
+            if self.freqai_info["feature_selection"]["save_feature_importance"].get("enabled", 0):
                 feature_imp = model.get_feature_importance(
                     data=eval_data, type=EFstrType.LossFunctionChange, prettified=True)
                 feature_imp.rename(
@@ -423,13 +361,10 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
 
             end_time = time()
             total_time = end_time - start_time
-            dk.data["extra_returns_per_train"]["total_time"] = total_time
+            dk.data["extra_returns_per_train"][f"total_time_{t}"] = total_time
 
-            """# Model performance metrics
-            encoder = LabelBinarizer()
-            encoder.fit(y_train)
-            y_test_enc = encoder.transform(y_test)
-            y_pred_proba = model.predict_proba(X_test)
+            # Model performance metrics
+            y_pred_proba = model.predict_proba(X_test)[:, 0]
 
             def optimum_f1(precision, recall, thresholds, beta):
                 numerator = (1 + beta ** 2) * recall * precision
@@ -439,31 +374,32 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 max_f1 = np.max(f1_scores)
                 max_f1_thresh = thresholds[np.argmax(f1_scores)]
 
-                return max_f1, max_f1_thresh"""
+                return max_f1, max_f1_thresh
 
-            """# Model performance metrics
-            for i, c in enumerate(encoder.classes_):
-                # Max F1 Score and Optimum threshold
-                precision, recall, thresholds = precision_recall_curve(
-                    y_test_enc[:, i], y_pred_proba[:, i])
+            # Model performance metrics
+            logger.info(f"Model performance metrics for {t} and {dk.pair}")
 
-                fbeta_entry = self.freqai_info["trigger_parameters"].get("fbeta_entry", 1)
-                fbeta_exit = self.freqai_info["trigger_parameters"].get("fbeta_exit", 1)
+            # Precision and recall stats
+            precision, recall, thresholds = precision_recall_curve(
+                y_test, y_pred_proba, pos_label=model.classes_[0])
 
-                max_fbeta_entry, fbeta_entry_thresh = optimum_f1(
-                    precision, recall, thresholds, beta=fbeta_entry)
-                max_fbeta_exit, fbeta_exit_thresh = optimum_f1(
-                    precision, recall, thresholds, beta=fbeta_exit)
+            # Print summary of precision and recall table
+            pr_summary = np.column_stack([precision, recall, np.append(thresholds, [1])])
+            pr_summary_df = pd.DataFrame(pr_summary, columns=["precision", "recall", "thresholds"])
+            bins = np.linspace(start=0, stop=1, num=11)
+            pr_agg_df = pr_summary_df.groupby(pd.cut(pr_summary_df["thresholds"], bins=bins)).mean()
+            print(pr_agg_df)
 
-                dk.data["extra_returns_per_train"][f"max_fbeta_entry_{c}"] = max_fbeta_entry
-                dk.data["extra_returns_per_train"][f"max_fbeta_exit_{c}"] = max_fbeta_exit
-                dk.data["extra_returns_per_train"][f"fbeta_entry_thresh_{c}"] = fbeta_entry_thresh
-                dk.data["extra_returns_per_train"][f"fbeta_exit_thresh_{c}"] = fbeta_exit_thresh
+            # Get optimal threshold for max F1 score
+            fbeta_entry = self.freqai_info["trigger_parameters"].get("fbeta_entry", 1)
+            max_fbeta_entry, fbeta_entry_thresh = optimum_f1(
+                precision, recall, thresholds, beta=fbeta_entry)
 
-                logger.info(f"{c} - Max FBeta exit score: {max_fbeta_exit}")
-                logger.info(f"{c} - Max FBeta entry score: {max_fbeta_entry}")
-                logger.info(f"{c} - Optimum Threshold FBeta exit score: {fbeta_exit_thresh}")
-                logger.info(f"{c} - Optimum Threshold FBeta entry score: {fbeta_entry_thresh}")"""
+            dk.data["extra_returns_per_train"][f"max_fbeta_entry_{t}"] = max_fbeta_entry
+            dk.data["extra_returns_per_train"][f"fbeta_entry_thresh_{t}"] = fbeta_entry_thresh
+
+            logger.info(f"{t} - Max FBeta entry score: {max_fbeta_entry}")
+            logger.info(f"{t} - Optimum Threshold FBeta entry score: {fbeta_entry_thresh}")
 
             models.append(model)
 

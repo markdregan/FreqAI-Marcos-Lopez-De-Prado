@@ -1,12 +1,10 @@
 # Helper functions for trading indicators
 
-import datetime
 import logging
 
 import numpy as np
 import pandas as pd
 import talib.abstract as ta
-from scipy import stats
 from technical import qtpylib
 
 
@@ -66,43 +64,6 @@ def daily_volatility(close: pd.DataFrame, shift: int, lookback: int):
     daily_volatility = log_returns_daily.ewm(span=lookback).std(ddof=0)
 
     return daily_volatility
-
-
-def exclude_weak_features(model: str, pair: str, exclusion_threshold: float,
-                          min_num_trials: int) -> np.array:
-    """Identify weakest features from prior model feature selection routines
-    and exclude these from future training
-
-    :return list of column names that should be excluded for model + pair combo"""
-
-    # Read trial + win data from sqlite
-    connection_string = "sqlite:///litmus.sqlite"
-    from_unix_date = datetime.datetime.utcnow() - datetime.timedelta(days=10)
-    sql = f"""
-        SELECT
-            model, pair, feature_name,
-            SUM(selected) as wins, SUM(1) AS trials
-        FROM feature_selection_history
-        WHERE model = '{model}'
-        AND pair = '{pair}'
-        AND train_time > '{from_unix_date}'
-        GROUP BY 1,2,3"""
-
-    try:
-        feat_history = pd.read_sql_query(sql=sql, con=connection_string)
-    except Exception as e:
-        logger.info(f"Issue reading from SQL to exclude features {e}")
-        empty = np.array([])
-        return empty
-
-    # Generate random variate from distribution per feature based on prior inclusion / exclusion
-    feat_history["rvs"] = stats.beta.rvs(1 + feat_history["wins"], 1 + feat_history["trials"])
-
-    excluded = feat_history.loc[
-        (feat_history["rvs"] < exclusion_threshold) &
-        (feat_history["trials"] > min_num_trials), "feature_name"].to_numpy()
-
-    return excluded
 
 
 def top_percent_change(dataframe: pd.DataFrame, length: int) -> float:
