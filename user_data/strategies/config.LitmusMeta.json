@@ -1,0 +1,213 @@
+{
+    "trading_mode": "futures",
+    "margin_mode": "isolated",
+    "max_open_trades": 5,
+    "stake_currency": "USDT",
+    "stake_amount": "unlimited",
+    "tradable_balance_ratio": 1,
+    "fiat_display_currency": "USD",
+    "dry_run": true,
+    "timeframe": "3m",
+    "dry_run_wallet": 10000,
+    "process_only_new_candles": true,
+    "cancel_open_orders_on_exit": true,
+    "unfilledtimeout": {
+        "entry": 10,
+        "exit": 30
+    },
+    "exchange": {
+        "ccxt_config": {
+            "enableRateLimit": true
+        },
+        "ccxt_async_config": {
+            "enableRateLimit": true,
+            "rateLimit": 200
+        },
+        "pair_whitelist": [
+            "SOL/USDT:USDT",
+            "ZEC/USDT:USDT",
+            "VET/USDT:USDT",
+            "DOGE/USDT:USDT",
+            "1INCH/USDT:USDT"
+        ],
+        "pair_blacklist": []
+    },
+    "order_types": {
+        "entry": "market",
+        "exit": "market",
+        "emergency_exit": "market",
+        "force_entry": "market",
+        "force_exit": "market",
+        "stoploss": "market",
+        "stoploss_on_exchange": false,
+        "stoploss_on_exchange_interval": 60
+    },
+    "entry_pricing": {
+        "price_side": "other",
+        "use_order_book": true,
+        "order_book_top": 1,
+        "price_last_balance": 0.0,
+        "check_depth_of_market": {
+            "enabled": false,
+            "bids_to_ask_delta": 1
+        }
+    },
+    "exit_pricing": {
+        "price_side": "other",
+        "use_order_book": true,
+        "order_book_top": 1
+    },
+    "pairlists": [
+        {
+            "method": "StaticPairList"
+        }
+    ],
+    "freqai": {
+        "enabled": true,
+        "purge_old_models": true,
+        "train_period_days": 100,
+        "backtest_period_days": 1,
+        "fit_live_predictions_candles": 0,
+        "identifier": "LitmusMeta",
+        "fixed_leverage": 1,
+        "feature_parameters": {
+            "include_timeframes": [
+                "3m",
+                "15m",
+                "2h"
+            ],
+            "include_corr_pairlist": [
+                "BTC/USDT:USDT"
+            ],
+            "label_period_candles": 0,
+            "include_shifted_candles": 2,
+            "DI_threshold": 10,
+            "weight_factor": 0.7,
+            "principal_component_analysis": false,
+            "plot_feature_importances": 0,
+            "use_SVM_to_remove_outliers": false,
+            "svm_params": {
+                "shuffle": false,
+                "nu": 0.05
+            },
+            "use_DBSCAN_to_remove_outliers": false,
+            "inlier_metric_window": 40,
+            "stratify_training_data": 0,
+            "indicator_periods_candles": [10, 20, 100],
+            "noise_standard_deviation": 0.03,
+            "reverse_train_test_order": false
+        },
+        "feature_selection": {
+            "drop_weak_features": {
+                "enabled": true,
+                "loss_ratio_threshold": 0.3,
+                "chance_excluded": 0.9,
+                "min_num_trials": 10
+            },
+            "psi_elimination": {
+                "enabled": false,
+                "split_frac": 0.5,
+                "threshold": 1.5
+            },
+            "greedy_selection": {
+                "enabled": true,
+                "threshold": 0.97
+            },
+            "drop_rows_meta_model": {
+                "enabled": true
+            },
+            "smart_selection": {
+                "enabled": false,
+                "n_estimators": 1000,
+                "threshold": 0.80,
+                "scoring": "f1_macro",
+                "cv": 3
+            },
+            "boruta_selection": {
+                "enabled": false,
+                "importance_measure": "gini",
+                "percentile": 80,
+                "n_trials": 100,
+                "drop_tentative": true,
+                "sample": false,
+                "train_or_test": "test",
+                "normalize": true,
+                "verbose": false
+            },
+            "recursive_addition": {
+                "enabled": false,
+                "n_estimators": 1000,
+                "scoring": "f1_macro",
+                "cv": 3,
+                "threshold": 0.0
+            },
+            "catboost_selection": {
+                "enabled": true,
+                "num_features_select": 200,
+                "steps": 3
+            },
+            "save_feature_importance": {
+                "enabled": true
+            }
+        },
+        "data_split_parameters": {
+            "test_size": 0.5,
+            "shuffle": false
+        },
+        "trigger_parameters": {
+            "fbeta_entry": 1,
+            "fbeta_exit": 1,
+            "smoothing_window": 30
+        },
+        "target_parameters": {
+            "tmb_long_upper": 0.01,
+            "tmb_long_lower": 0.01,
+            "tmb_long_window": 10,
+            "tmb_short_upper": 0.01,
+            "tmb_short_lower": 0.01,
+            "tmb_short_window": 10,
+            "primary_perf_window": 10
+        },
+        "model_training_parameters": {
+            "n_estimators": 2000,
+            "loss_function": "MultiClass",
+            "early_stopping_rounds": 200,
+            "task_type": "CPU",
+            "verbose": 50,
+            "allow_writing_files": true
+        },
+        "extra_returns_per_train": {
+            "total_time_&-primary_enter_long": 0,
+            "total_time_&-primary_enter_short": 0,
+            "drop-row": 0,
+            "num_trees_&-primary_enter_long": 0,
+            "num_trees_&-primary_enter_short": 0,
+            "fbeta_entry_thresh_&-primary_enter_long": 0,
+            "fbeta_entry_thresh_&-primary_enter_short": 0
+        }
+    },
+    "telegram": {
+        "enabled": false,
+        "token": "5012333300:AAFiwgqakXFwAsDBLqgXDLTnWqQCMBsYbK4",
+        "chat_id": "1963068189"
+    },
+    "api_server": {
+        "enabled": true,
+        "listen_ip_address": "127.0.0.1",
+        "listen_port": 8081,
+        "verbosity": "error",
+        "enable_openapi": false,
+        "jwt_secret_key": "575189dbf1e3bcbeda0d7b69506fb48e95826f481ce17a38c5ca8ba9ffe5911e",
+        "CORS_origins": [],
+        "username": "LitmusBot",
+        "password": "KeirMarkHugh"
+    },
+    "bot_name": "Litmus",
+    "force_entry_enable": true,
+    "initial_state": "running",
+    "internals": {
+        "process_throttle_secs": 5
+    }
+}
+
+
