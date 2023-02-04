@@ -43,14 +43,14 @@ EXCHANGES = {
         'hasQuoteVolumeFutures': True,
         'leverage_tiers_public': False,
         'leverage_in_spot_market': False,
-        'sample_order': {
+        'sample_order': [{
             "symbol": "SOLUSDT",
             "orderId": 3551312894,
             "orderListId": -1,
             "clientOrderId": "x-R4DD3S8297c73a11ccb9dc8f2811ba",
             "transactTime": 1674493798550,
-            "price": "15.00000000",
-            "origQty": "1.00000000",
+            "price": "15.50000000",
+            "origQty": "1.10000000",
             "executedQty": "0.00000000",
             "cummulativeQuoteQty": "0.00000000",
             "status": "NEW",
@@ -60,7 +60,32 @@ EXCHANGES = {
             "workingTime": 1674493798550,
             "fills": [],
             "selfTradePreventionMode": "NONE",
-        }
+        }]
+    },
+    'binanceus': {
+        'pair': 'BTC/USDT',
+        'stake_currency': 'USDT',
+        'hasQuoteVolume': True,
+        'timeframe': '5m',
+        'futures': False,
+        'sample_order': [{
+            "symbol": "SOLUSDT",
+            "orderId": 3551312894,
+            "orderListId": -1,
+            "clientOrderId": "x-R4DD3S8297c73a11ccb9dc8f2811ba",
+            "transactTime": 1674493798550,
+            "price": "15.50000000",
+            "origQty": "1.10000000",
+            "executedQty": "0.00000000",
+            "cummulativeQuoteQty": "0.00000000",
+            "status": "NEW",
+            "timeInForce": "GTC",
+            "type": "LIMIT",
+            "side": "BUY",
+            "workingTime": 1674493798550,
+            "fills": [],
+            "selfTradePreventionMode": "NONE",
+        }]
     },
     'kraken': {
         'pair': 'BTC/USDT',
@@ -77,6 +102,40 @@ EXCHANGES = {
         'timeframe': '5m',
         'leverage_tiers_public': False,
         'leverage_in_spot_market': True,
+        'sample_order': [
+            {'id': '63d6742d0adc5570001d2bbf7'},  # create order
+            {
+                'id': '63d6742d0adc5570001d2bbf7',
+                'symbol': 'SOL-USDT',
+                'opType': 'DEAL',
+                'type': 'limit',
+                'side': 'buy',
+                'price': '15.5',
+                'size': '1.1',
+                'funds': '0',
+                'dealFunds': '0.032626',
+                'dealSize': '0.1',
+                'fee': '0.000065252',
+                'feeCurrency': 'USDT',
+                'stp': '',
+                'stop': '',
+                'stopTriggered': False,
+                'stopPrice': '0',
+                'timeInForce': 'GTC',
+                'postOnly': False,
+                'hidden': False,
+                'iceberg': False,
+                'visibleSize': '0',
+                'cancelAfter': 0,
+                'channel': 'API',
+                'clientOid': '0a053870-11bf-41e5-be61-b272a4cb62e1',
+                'remark': None,
+                'tags': 'partner:ccxt',
+                'isActive': False,
+                'cancelExist': False,
+                'createdAt': 1674493798550,
+                'tradeType': 'TRADE'
+            }],
     },
     'gateio': {
         'pair': 'BTC/USDT',
@@ -99,6 +158,33 @@ EXCHANGES = {
         'hasQuoteVolumeFutures': False,
         'leverage_tiers_public': True,
         'leverage_in_spot_market': True,
+    },
+    'bybit': {
+        'pair': 'BTC/USDT',
+        'stake_currency': 'USDT',
+        'hasQuoteVolume': True,
+        'timeframe': '5m',
+        'futures_pair': 'BTC/USDT:USDT',
+        'futures': True,
+        'leverage_tiers_public': True,
+        'leverage_in_spot_market': True,
+        'sample_order': [
+            {
+                "orderId": "1274754916287346280",
+                "orderLinkId": "1666798627015730",
+                "symbol": "SOLUSDT",
+                "createTime": "1674493798550",
+                "orderPrice": "15.5",
+                "orderQty": "1.1",
+                "orderType": "LIMIT",
+                "side": "BUY",
+                "status": "NEW",
+                "timeInForce": "GTC",
+                "accountId": "5555555",
+                "execQty": "0",
+                "orderCategory": "0"
+            }
+        ]
     },
     'huobi': {
         'pair': 'ETH/BTC',
@@ -176,6 +262,7 @@ def exchange_futures(request, exchange_conf, class_mocker):
         class_mocker.patch('freqtrade.exchange.exchange.Exchange.fetch_trading_fees')
         class_mocker.patch('freqtrade.exchange.okx.Okx.additional_exchange_init')
         class_mocker.patch('freqtrade.exchange.binance.Binance.additional_exchange_init')
+        class_mocker.patch('freqtrade.exchange.bybit.Bybit.additional_exchange_init')
         class_mocker.patch('freqtrade.exchange.exchange.Exchange.load_cached_leverage_tiers',
                            return_value=None)
         class_mocker.patch('freqtrade.exchange.exchange.Exchange.cache_leverage_tiers')
@@ -231,14 +318,24 @@ class TestCCXTExchange():
 
     def test_ccxt_order_parse(self, exchange: EXCHANGE_FIXTURE_TYPE):
         exch, exchange_name = exchange
-        if stuff := EXCHANGES[exchange_name].get('sample_order'):
-
-            po = exch._api.parse_order(stuff)
-            assert po['timestamp'] == 1674493798550
-            assert isinstance(po['timestamp'], int)
-            assert isinstance(po['price'], float)
-            assert isinstance(po['amount'], float)
-            assert isinstance(po['status'], str)
+        if orders := EXCHANGES[exchange_name].get('sample_order'):
+            for order in orders:
+                po = exch._api.parse_order(order)
+                assert isinstance(po['id'], str)
+                assert po['id'] is not None
+                if len(order.keys()) < 5:
+                    # Kucoin case
+                    assert po['status'] == 'closed'
+                    continue
+                assert po['timestamp'] == 1674493798550
+                assert isinstance(po['datetime'], str)
+                assert isinstance(po['timestamp'], int)
+                assert isinstance(po['price'], float)
+                assert po['price'] == 15.5
+                assert po['symbol'] == 'SOL/USDT'
+                assert isinstance(po['amount'], float)
+                assert po['amount'] == 1.1
+                assert isinstance(po['status'], str)
         else:
             pytest.skip(f"No sample order available for exchange {exchange_name}")
 
@@ -553,23 +650,25 @@ class TestCCXTExchange():
             )
 
             liquidation_price = futures.dry_run_liquidation_price(
-                futures_pair,
-                40000,
-                False,
-                100,
-                100,
-                100,
+                pair=futures_pair,
+                open_rate=40000,
+                is_short=False,
+                amount=100,
+                stake_amount=100,
+                leverage=5,
+                wallet_balance=100,
             )
             assert (isinstance(liquidation_price, float))
             assert liquidation_price >= 0.0
 
             liquidation_price = futures.dry_run_liquidation_price(
-                futures_pair,
-                40000,
-                False,
-                100,
-                100,
-                100,
+                pair=futures_pair,
+                open_rate=40000,
+                is_short=False,
+                amount=100,
+                stake_amount=100,
+                leverage=5,
+                wallet_balance=100,
             )
             assert (isinstance(liquidation_price, float))
             assert liquidation_price >= 0.0
