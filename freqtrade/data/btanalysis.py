@@ -246,14 +246,8 @@ def _load_backtest_data_df_compatibility(df: pd.DataFrame) -> pd.DataFrame:
     """
     Compatibility support for older backtest data.
     """
-    df['open_date'] = pd.to_datetime(df['open_date'],
-                                     utc=True,
-                                     infer_datetime_format=True
-                                     )
-    df['close_date'] = pd.to_datetime(df['close_date'],
-                                      utc=True,
-                                      infer_datetime_format=True
-                                      )
+    df['open_date'] = pd.to_datetime(df['open_date'], utc=True)
+    df['close_date'] = pd.to_datetime(df['close_date'], utc=True)
     # Compatibility support for pre short Columns
     if 'is_short' not in df.columns:
         df['is_short'] = False
@@ -346,7 +340,7 @@ def evaluate_result_multi(results: pd.DataFrame, timeframe: str,
     return df_final[df_final['open_trades'] > max_open_trades]
 
 
-def trade_list_to_dataframe(trades: List[LocalTrade]) -> pd.DataFrame:
+def trade_list_to_dataframe(trades: Union[List[Trade], List[LocalTrade]]) -> pd.DataFrame:
     """
     Convert list of Trade objects to pandas Dataframe
     :param trades: List of trade objects
@@ -373,7 +367,7 @@ def load_trades_from_db(db_url: str, strategy: Optional[str] = None) -> pd.DataF
     filters = []
     if strategy:
         filters.append(Trade.strategy == strategy)
-    trades = trade_list_to_dataframe(Trade.get_trades(filters).all())
+    trades = trade_list_to_dataframe(list(Trade.get_trades(filters).all()))
 
     return trades
 

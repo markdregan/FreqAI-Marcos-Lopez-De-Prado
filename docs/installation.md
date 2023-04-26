@@ -52,7 +52,7 @@ These requirements apply to both [Script Installation](#script-installation) and
 * [pip](https://pip.pypa.io/en/stable/installing/)
 * [git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git)
 * [virtualenv](https://virtualenv.pypa.io/en/stable/installation.html) (Recommended)
-* [TA-Lib](https://mrjbq7.github.io/ta-lib/install.html) (install instructions [below](#install-ta-lib))
+* [TA-Lib](https://ta-lib.github.io/ta-lib-python/) (install instructions [below](#install-ta-lib))
 
 ### Install code
 
@@ -210,7 +210,7 @@ sudo ./build_helpers/install_ta-lib.sh
 
 ##### TA-Lib manual installation
 
-Official webpage: https://mrjbq7.github.io/ta-lib/install.html
+[Official installation guide](https://ta-lib.github.io/ta-lib-python/install.html)
 
 ```bash
 wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
@@ -290,10 +290,8 @@ cd freqtrade
 
 #### Freqtrade install: Conda Environment
 
-Prepare conda-freqtrade environment, using file `environment.yml`, which exist in main freqtrade directory
-
 ```bash
-conda env create -n freqtrade-conda -f environment.yml
+conda create --name freqtrade python=3.10
 ```
 
 !!! Note "Creating Conda Environment"
@@ -302,12 +300,9 @@ conda env create -n freqtrade-conda -f environment.yml
     ```bash
     # choose your own packages
     conda env create -n [name of the environment] [python version] [packages]
-
-    # point to file with packages
-    conda env create -n [name of the environment] -f [file]
     ```
 
-#### Enter/exit freqtrade-conda environment
+#### Enter/exit freqtrade environment
 
 To check available environments, type
 
@@ -319,7 +314,7 @@ Enter installed environment
 
 ```bash
 # enter conda environment
-conda activate freqtrade-conda
+conda activate freqtrade
 
 # exit conda environment - don't do it now
 conda deactivate
@@ -329,6 +324,7 @@ Install last python dependencies with pip
 
 ```bash
 python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
 python3 -m pip install -e .
 ```
 
@@ -336,7 +332,7 @@ Patch conda libta-lib (Linux only)
 
 ```bash
 # Ensure that the environment is active!
-conda activate freqtrade-conda
+conda activate freqtrade
 
 cd build_helpers
 bash install_ta-lib.sh ${CONDA_PREFIX} nosudo
@@ -355,8 +351,8 @@ conda env list
 # activate base environment
 conda activate
 
-# activate freqtrade-conda environment
-conda activate freqtrade-conda
+# activate freqtrade environment
+conda activate freqtrade
 
 #deactivate any conda environments
 conda deactivate                              

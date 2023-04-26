@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import ccxt
 
 from freqtrade.constants import BuySell
-from freqtrade.enums import MarginMode, TradingMode
+from freqtrade.enums import MarginMode, PriceType, TradingMode
 from freqtrade.exceptions import DDosProtection, OperationalException, TemporaryError
 from freqtrade.exchange import Exchange
 from freqtrade.exchange.common import retrier
@@ -27,16 +27,21 @@ class Bybit(Exchange):
     """
 
     _ft_has: Dict = {
-        "ohlcv_candle_limit": 1000,
+        "ohlcv_candle_limit": 200,
         "ohlcv_has_history": False,
     }
     _ft_has_futures: Dict = {
-        "ohlcv_candle_limit": 200,
         "ohlcv_has_history": True,
         "mark_ohlcv_timeframe": "4h",
         "funding_fee_timeframe": "8h",
         "stoploss_on_exchange": True,
         "stoploss_order_types": {"limit": "limit", "market": "market"},
+        "stop_price_type_field": "triggerBy",
+        "stop_price_type_value_mapping": {
+            PriceType.LAST: "LastPrice",
+            PriceType.MARK: "MarkPrice",
+            PriceType.INDEX: "IndexPrice",
+        },
     }
 
     _supported_trading_mode_margin_pairs: List[Tuple[TradingMode, MarginMode]] = [
@@ -109,7 +114,7 @@ class Bybit(Exchange):
         data = [[x['timestamp'], x['fundingRate'], 0, 0, 0, 0] for x in data]
         return data
 
-    def _lev_prep(self, pair: str, leverage: float, side: BuySell):
+    def _lev_prep(self, pair: str, leverage: float, side: BuySell, accept_fail: bool = False):
         if self.trading_mode != TradingMode.SPOT:
             params = {'leverage': leverage}
             self.set_margin_mode(pair, self.margin_mode, accept_fail=True, params=params)

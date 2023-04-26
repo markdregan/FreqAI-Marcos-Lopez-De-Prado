@@ -4,8 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from freqtrade.constants import BuySell
-from freqtrade.enums import MarginMode, TradingMode
-from freqtrade.exceptions import OperationalException
+from freqtrade.enums import MarginMode, PriceType, TradingMode
 from freqtrade.exchange import Exchange
 from freqtrade.misc import safe_value_fallback2
 
@@ -13,7 +12,7 @@ from freqtrade.misc import safe_value_fallback2
 logger = logging.getLogger(__name__)
 
 
-class Gateio(Exchange):
+class Gate(Exchange):
     """
     Gate.io exchange class. Contains adjustments needed for Freqtrade to work
     with this exchange.
@@ -28,12 +27,21 @@ class Gateio(Exchange):
         "order_time_in_force": ['GTC', 'IOC'],
         "stoploss_order_types": {"limit": "limit"},
         "stoploss_on_exchange": True,
+        "marketOrderRequiresPrice": True,
     }
 
     _ft_has_futures: Dict = {
         "needs_trading_fees": True,
+        "marketOrderRequiresPrice": False,
+        "tickers_have_bid_ask": False,
         "fee_cost_in_contracts": False,  # Set explicitly to false for clarity
         "order_props_in_contracts": ['amount', 'filled', 'remaining'],
+        "stop_price_type_field": "price_type",
+        "stop_price_type_value_mapping": {
+            PriceType.LAST: 0,
+            PriceType.MARK: 1,
+            PriceType.INDEX: 2,
+        },
     }
 
     _supported_trading_mode_margin_pairs: List[Tuple[TradingMode, MarginMode]] = [
@@ -42,13 +50,6 @@ class Gateio(Exchange):
         # (TradingMode.FUTURES, MarginMode.CROSS),
         (TradingMode.FUTURES, MarginMode.ISOLATED)
     ]
-
-    def validate_ordertypes(self, order_types: Dict) -> None:
-
-        if self.trading_mode != TradingMode.FUTURES:
-            if any(v == 'market' for k, v in order_types.items()):
-                raise OperationalException(
-                    f'Exchange {self.name} does not support market orders.')
 
     def _get_params(
             self,
@@ -67,8 +68,7 @@ class Gateio(Exchange):
         )
         if ordertype == 'market' and self.trading_mode == TradingMode.FUTURES:
             params['type'] = 'market'
-            param = self._ft_has.get('time_in_force_parameter', '')
-            params.update({param: 'IOC'})
+            params.update({'timeInForce': 'IOC'})
         return params
 
     def get_trades_for_order(self, order_id: str, pair: str, since: datetime,
@@ -77,7 +77,7 @@ class Gateio(Exchange):
 
         if self.trading_mode == TradingMode.FUTURES:
             # Futures usually don't contain fees in the response.
-            # As such, futures orders on gateio will not contain a fee, which causes
+            # As such, futures orders on gate will not contain a fee, which causes
             # a repeated "update fee" cycle and wrong calculations.
             # Therefore we patch the response with fees if it's not available.
             # An alternative also contianing fees would be

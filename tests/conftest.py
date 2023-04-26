@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Optional
 from unittest.mock import MagicMock, Mock, PropertyMock
@@ -12,7 +12,6 @@ import arrow
 import numpy as np
 import pandas as pd
 import pytest
-from telegram import Chat, Message, Update
 
 from freqtrade import constants
 from freqtrade.commands import Arguments
@@ -40,6 +39,7 @@ np.seterr(all='raise')
 
 CURRENT_TEST_STRATEGY = 'StrategyTestV3'
 TRADE_SIDES = ('long', 'short')
+EXMS = 'freqtrade.exchange.exchange.Exchange'
 
 
 def pytest_addoption(parser):
@@ -145,22 +145,21 @@ def patch_exchange(
     mock_markets=True,
     mock_supported_modes=True
 ) -> None:
-    mocker.patch('freqtrade.exchange.Exchange._load_async_markets', MagicMock(return_value={}))
-    mocker.patch('freqtrade.exchange.Exchange.validate_config', MagicMock())
-    mocker.patch('freqtrade.exchange.Exchange.validate_timeframes', MagicMock())
-    mocker.patch('freqtrade.exchange.Exchange.id', PropertyMock(return_value=id))
-    mocker.patch('freqtrade.exchange.Exchange.name', PropertyMock(return_value=id.title()))
-    mocker.patch('freqtrade.exchange.Exchange.precisionMode', PropertyMock(return_value=2))
+    mocker.patch(f'{EXMS}._load_async_markets', return_value={})
+    mocker.patch(f'{EXMS}.validate_config', MagicMock())
+    mocker.patch(f'{EXMS}.validate_timeframes', MagicMock())
+    mocker.patch(f'{EXMS}.id', PropertyMock(return_value=id))
+    mocker.patch(f'{EXMS}.name', PropertyMock(return_value=id.title()))
+    mocker.patch(f'{EXMS}.precisionMode', PropertyMock(return_value=2))
 
     if mock_markets:
         if isinstance(mock_markets, bool):
             mock_markets = get_markets()
-        mocker.patch('freqtrade.exchange.Exchange.markets',
-                     PropertyMock(return_value=mock_markets))
+        mocker.patch(f'{EXMS}.markets', PropertyMock(return_value=mock_markets))
 
     if mock_supported_modes:
         mocker.patch(
-            f'freqtrade.exchange.{id.capitalize()}._supported_trading_mode_margin_pairs',
+            f'freqtrade.exchange.{id}.{id.capitalize()}._supported_trading_mode_margin_pairs',
             PropertyMock(return_value=[
                 (TradingMode.MARGIN, MarginMode.CROSS),
                 (TradingMode.MARGIN, MarginMode.ISOLATED),
@@ -170,10 +169,10 @@ def patch_exchange(
         )
 
     if api_mock:
-        mocker.patch('freqtrade.exchange.Exchange._init_ccxt', MagicMock(return_value=api_mock))
+        mocker.patch(f'{EXMS}._init_ccxt', return_value=api_mock)
     else:
-        mocker.patch('freqtrade.exchange.Exchange._init_ccxt', MagicMock())
-        mocker.patch('freqtrade.exchange.Exchange.timeframes', PropertyMock(
+        mocker.patch(f'{EXMS}._init_ccxt', MagicMock())
+        mocker.patch(f'{EXMS}.timeframes', PropertyMock(
                 return_value=['5m', '15m', '1h', '1d']))
 
 
@@ -299,7 +298,7 @@ def create_mock_trades(fee, is_short: Optional[bool] = False, use_db: bool = Tru
     """
     def add_trade(trade):
         if use_db:
-            Trade.query.session.add(trade)
+            Trade.session.add(trade)
         else:
             LocalTrade.add_bt_trade(trade)
     is_short1 = is_short if is_short is not None else True
@@ -332,11 +331,11 @@ def create_mock_trades_with_leverage(fee, use_db: bool = True):
     Create some fake trades ...
     """
     if use_db:
-        Trade.query.session.rollback()
+        Trade.session.rollback()
 
     def add_trade(trade):
         if use_db:
-            Trade.query.session.add(trade)
+            Trade.session.add(trade)
         else:
             LocalTrade.add_bt_trade(trade)
 
@@ -366,7 +365,7 @@ def create_mock_trades_with_leverage(fee, use_db: bool = True):
     add_trade(trade)
 
     if use_db:
-        Trade.query.session.flush()
+        Trade.session.flush()
 
 
 def create_mock_trades_usdt(fee, is_short: Optional[bool] = False, use_db: bool = True):
@@ -375,7 +374,7 @@ def create_mock_trades_usdt(fee, is_short: Optional[bool] = False, use_db: bool 
     """
     def add_trade(trade):
         if use_db:
-            Trade.query.session.add(trade)
+            Trade.session.add(trade)
         else:
             LocalTrade.add_bt_trade(trade)
 
@@ -504,7 +503,7 @@ def get_default_conf(testdatadir):
             {"method": "StaticPairList"}
         ],
         "telegram": {
-            "enabled": True,
+            "enabled": False,
             "token": "token",
             "chat_id": "0",
             "notification_settings": {},
@@ -548,13 +547,6 @@ def get_default_conf_usdt(testdatadir):
         },
     })
     return configuration
-
-
-@pytest.fixture
-def update():
-    _update = Update(0)
-    _update.message = Message(0, datetime.utcnow(), Chat(0, 0))
-    return _update
 
 
 @pytest.fixture
@@ -2573,7 +2565,7 @@ def import_fails() -> None:
     realimport = builtins.__import__
 
     def mockedimport(name, *args, **kwargs):
-        if name in ["filelock", 'systemd.journal', 'uvloop']:
+        if name in ["filelock", 'cysystemd.journal', 'uvloop']:
             raise ImportError(f"No module named '{name}'")
         return realimport(name, *args, **kwargs)
 

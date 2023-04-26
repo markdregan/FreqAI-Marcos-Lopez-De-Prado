@@ -24,7 +24,7 @@ The framework is built on stable_baselines3 (torch) and OpenAI gym for the base 
 
 ### Important considerations
 
-As explained above, the agent is "trained" in an artificial trading "environment". In our case, that environment may seem quite similar to a real Freqtrade backtesting environment, but it is *NOT*. In fact, the RL training environment is much more simplified. It does not incorporate any of the complicated strategy logic, such as callbacks like `custom_exit`, `custom_stoploss`, leverage controls, etc. The RL environment is instead a very "raw" representation of the true market, where the agent has free-will to learn the policy (read: stoploss, take profit, etc.) which is enforced by the `calculate_reward()`. Thus, it is important to consider that the agent training environment is not identical to the real world.
+As explained above, the agent is "trained" in an artificial trading "environment". In our case, that environment may seem quite similar to a real Freqtrade backtesting environment, but it is *NOT*. In fact, the RL training environment is much more simplified. It does not incorporate any of the complicated strategy logic, such as callbacks like `custom_exit`, `custom_stoploss`, leverage controls, etc. The RL environment is instead a very "raw" representation of the true market, where the agent has free will to learn the policy (read: stoploss, take profit, etc.) which is enforced by the `calculate_reward()`. Thus, it is important to consider that the agent training environment is not identical to the real world.
 
 ## Running Reinforcement Learning
 
@@ -37,7 +37,7 @@ freqtrade trade --freqaimodel ReinforcementLearner --strategy MyRLStrategy --con
 where `ReinforcementLearner` will use the templated `ReinforcementLearner` from `freqai/prediction_models/ReinforcementLearner` (or a custom user defined one located in `user_data/freqaimodels`). The strategy, on the other hand, follows the same base [feature engineering](freqai-feature-engineering.md) with `feature_engineering_*` as a typical Regressor. The difference lies in the creation of the targets, Reinforcement Learning doesn't require them. However, FreqAI requires a default (neutral) value to be set in the action column:
 
 ```python
-    def set_freqai_targets(self, dataframe, **kwargs):
+    def set_freqai_targets(self, dataframe, **kwargs) -> DataFrame:
         """
         *Only functional with FreqAI enabled strategies*
         Required function to set the targets for the model.
@@ -53,17 +53,19 @@ where `ReinforcementLearner` will use the templated `ReinforcementLearner` from 
         # For RL, there are no direct targets to set. This is filler (neutral)
         # until the agent sends an action.
         dataframe["&-action"] = 0
+        return dataframe
 ```
 
-Most of the function remains the same as for typical Regressors, however, the function above shows how the strategy must pass the raw price data to the agent so that it has access to raw OHLCV in the training environment:
+Most of the function remains the same as for typical Regressors, however, the function below shows how the strategy must pass the raw price data to the agent so that it has access to raw OHLCV in the training environment:
 
 ```python
-    def feature_engineering_standard(self, dataframe, **kwargs):
+    def feature_engineering_standard(self, dataframe: DataFrame, **kwargs) -> DataFrame:
         # The following features are necessary for RL models
         dataframe[f"%-raw_close"] = dataframe["close"]
         dataframe[f"%-raw_open"] = dataframe["open"]
         dataframe[f"%-raw_high"] = dataframe["high"]
         dataframe[f"%-raw_low"] = dataframe["low"]
+    return dataframe
 ```
 
 Finally, there is no explicit "label" to make - instead it is necessary to assign the `&-action` column which will contain the agent's actions when accessed in `populate_entry/exit_trends()`. In the present example, the neutral action to 0. This value should align with the environment used. FreqAI provides two environments, both use 0 as the neutral action.
@@ -175,10 +177,23 @@ As you begin to modify the strategy and the prediction model, you will quickly r
                 pnl = self.get_unrealized_profit()
 
                 factor = 100
+
+                pair = self.pair.replace(':', '')
+
+                # you can use feature values from dataframe
+                # Assumes the shifted RSI indicator has been generated in the strategy.
+                rsi_now = self.raw_features[f"%-rsi-period_10_shift-1_{pair}_"
+                                f"{self.config['timeframe']}"].iloc[self._current_tick]
+
                 # reward agent for entering trades
-                if action in (Actions.Long_enter.value, Actions.Short_enter.value) \
-                        and self._position == Positions.Neutral:
-                    return 25
+                if (action in (Actions.Long_enter.value, Actions.Short_enter.value)
+                        and self._position == Positions.Neutral):
+                    if rsi_now < 40:
+                        factor = 40 / rsi_now
+                    else:
+                        factor = 1
+                    return 25 * factor
+
                 # discourage agent from not entering trades
                 if action == Actions.Neutral.value and self._position == Positions.Neutral:
                     return -1
@@ -235,13 +250,13 @@ FreqAI also provides a built in episodic summary logger called `self.tensorboard
             """
             def calculate_reward(self, action: int) -> float:
                 if not self._is_valid(action):
-                    self.tensorboard_log("is_valid")
+                    self.tensorboard_log("invalid")
                     return -2
 
 ```
 
 !!! Note
-    The `self.tensorboard_log()` function is designed for tracking incremented objects only i.e. events, actions inside the training environment. If the event of interest is a float, the float can be passed as the second argument e.g. `self.tensorboard_log("float_metric1", 0.23)` would add 0.23 to `float_metric`. In this case you can also disable incrementing using `inc=False` parameter.
+    The `self.tensorboard_log()` function is designed for tracking incremented objects only i.e. events, actions inside the training environment. If the event of interest is a float, the float can be passed as the second argument e.g. `self.tensorboard_log("float_metric1", 0.23)`. In this case the metric values are not incremented.
 
 ### Choosing a base environment
 

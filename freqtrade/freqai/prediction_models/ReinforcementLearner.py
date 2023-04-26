@@ -71,7 +71,8 @@ class ReinforcementLearner(BaseReinforcementLearningModel):
 
         model.learn(
             total_timesteps=int(total_timesteps),
-            callback=[self.eval_callback, self.tensorboard_callback]
+            callback=[self.eval_callback, self.tensorboard_callback],
+            progress_bar=self.rl_config.get('progress_bar', False)
         )
 
         if Path(dk.data_path / "best_model.zip").is_file():
@@ -100,7 +101,7 @@ class ReinforcementLearner(BaseReinforcementLearningModel):
             """
             # first, penalize if the action is not valid
             if not self._is_valid(action):
-                self.tensorboard_log("is_valid")
+                self.tensorboard_log("invalid", category="actions")
                 return -2
 
             pnl = self.get_unrealized_profit()

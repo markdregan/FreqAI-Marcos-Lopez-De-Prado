@@ -17,7 +17,7 @@ from freqtrade.enums import CandleType
 from freqtrade.exchange import timeframe_to_minutes, timeframe_to_prev_date
 from freqtrade.exchange.exchange import Exchange, timeframe_to_msecs
 from freqtrade.resolvers.exchange_resolver import ExchangeResolver
-from tests.conftest import get_default_conf_usdt
+from tests.conftest import EXMS, get_default_conf_usdt
 
 
 EXCHANGE_FIXTURE_TYPE = Tuple[Exchange, str]
@@ -37,7 +37,7 @@ EXCHANGES = {
         'stake_currency': 'USDT',
         'use_ci_proxy': True,
         'hasQuoteVolume': True,
-        'timeframe': '5m',
+        'timeframe': '1h',
         'futures': True,
         'futures_pair': 'BTC/USDT:USDT',
         'hasQuoteVolumeFutures': True,
@@ -66,7 +66,7 @@ EXCHANGES = {
         'pair': 'BTC/USDT',
         'stake_currency': 'USDT',
         'hasQuoteVolume': True,
-        'timeframe': '5m',
+        'timeframe': '1h',
         'futures': False,
         'sample_order': [{
             "symbol": "SOLUSDT",
@@ -91,7 +91,7 @@ EXCHANGES = {
         'pair': 'BTC/USDT',
         'stake_currency': 'USDT',
         'hasQuoteVolume': True,
-        'timeframe': '5m',
+        'timeframe': '1h',
         'leverage_tiers_public': False,
         'leverage_in_spot_market': True,
     },
@@ -99,7 +99,7 @@ EXCHANGES = {
         'pair': 'XRP/USDT',
         'stake_currency': 'USDT',
         'hasQuoteVolume': True,
-        'timeframe': '5m',
+        'timeframe': '1h',
         'leverage_tiers_public': False,
         'leverage_in_spot_market': True,
         'sample_order': [
@@ -113,8 +113,8 @@ EXCHANGES = {
                 'price': '15.5',
                 'size': '1.1',
                 'funds': '0',
-                'dealFunds': '0.032626',
-                'dealSize': '0.1',
+                'dealFunds': '17.05',
+                'dealSize': '1.1',
                 'fee': '0.000065252',
                 'feeCurrency': 'USDT',
                 'stp': '',
@@ -137,22 +137,85 @@ EXCHANGES = {
                 'tradeType': 'TRADE'
             }],
     },
-    'gateio': {
+    'gate': {
         'pair': 'BTC/USDT',
         'stake_currency': 'USDT',
         'hasQuoteVolume': True,
-        'timeframe': '5m',
+        'timeframe': '1h',
         'futures': True,
         'futures_pair': 'BTC/USDT:USDT',
         'hasQuoteVolumeFutures': True,
         'leverage_tiers_public': True,
         'leverage_in_spot_market': True,
+        'sample_order': [
+            {
+                "id": "276266139423",
+                "text": "apiv4",
+                "create_time": "1674493798",
+                "update_time": "1674493798",
+                "create_time_ms": "1674493798550",
+                "update_time_ms": "1674493798550",
+                "status": "closed",
+                "currency_pair": "SOL_USDT",
+                "type": "limit",
+                "account": "spot",
+                "side": "buy",
+                "amount": "1.1",
+                "price": "15.5",
+                "time_in_force": "gtc",
+                "iceberg": "0",
+                "left": "0",
+                "fill_price": "17.05",
+                "filled_total": "17.05",
+                "avg_deal_price": "15.5",
+                "fee": "0.0000018",
+                "fee_currency": "SOL",
+                "point_fee": "0",
+                "gt_fee": "0",
+                "gt_maker_fee": "0",
+                "gt_taker_fee": "0.0015",
+                "gt_discount": True,
+                "rebated_fee": "0",
+                "rebated_fee_currency": "USDT"
+            },
+            {
+                # market order
+                'id': '276401180529',
+                'text': 'apiv4',
+                'create_time': '1674493798',
+                'update_time': '1674493798',
+                'create_time_ms': '1674493798550',
+                'update_time_ms': '1674493798550',
+                'status': 'cancelled',
+                'currency_pair': 'SOL_USDT',
+                'type': 'market',
+                'account': 'spot',
+                'side': 'buy',
+                'amount': '17.05',
+                'price': '0',
+                'time_in_force': 'ioc',
+                'iceberg': '0',
+                'left': '0.0000000016228',
+                'fill_price': '17.05',
+                'filled_total': '17.05',
+                'avg_deal_price': '15.5',
+                'fee': '0',
+                'fee_currency': 'SOL',
+                'point_fee': '0.0199999999967544',
+                'gt_fee': '0',
+                'gt_maker_fee': '0',
+                'gt_taker_fee': '0',
+                'gt_discount': False,
+                'rebated_fee': '0',
+                'rebated_fee_currency': 'USDT'
+            }
+        ],
     },
     'okx': {
         'pair': 'BTC/USDT',
         'stake_currency': 'USDT',
         'hasQuoteVolume': True,
-        'timeframe': '5m',
+        'timeframe': '1h',
         'futures': True,
         'futures_pair': 'BTC/USDT:USDT',
         'hasQuoteVolumeFutures': False,
@@ -163,7 +226,7 @@ EXCHANGES = {
         'pair': 'BTC/USDT',
         'stake_currency': 'USDT',
         'hasQuoteVolume': True,
-        'timeframe': '5m',
+        'timeframe': '1h',
         'futures_pair': 'BTC/USDT:USDT',
         'futures': True,
         'leverage_tiers_public': True,
@@ -190,14 +253,14 @@ EXCHANGES = {
         'pair': 'ETH/BTC',
         'stake_currency': 'BTC',
         'hasQuoteVolume': True,
-        'timeframe': '5m',
+        'timeframe': '1h',
         'futures': False,
     },
     'bitvavo': {
         'pair': 'BTC/EUR',
         'stake_currency': 'EUR',
         'hasQuoteVolume': True,
-        'timeframe': '5m',
+        'timeframe': '1h',
         'leverage_tiers_public': False,
         'leverage_in_spot_market': False,
     },
@@ -246,7 +309,7 @@ def exchange(request, exchange_conf):
 
 @pytest.fixture(params=EXCHANGES, scope="class")
 def exchange_futures(request, exchange_conf, class_mocker):
-    if not EXCHANGES[request.param].get('futures') is True:
+    if EXCHANGES[request.param].get('futures') is not True:
         yield None, request.param
     else:
         exchange_conf = set_test_proxy(
@@ -259,13 +322,12 @@ def exchange_futures(request, exchange_conf, class_mocker):
 
         class_mocker.patch(
             'freqtrade.exchange.binance.Binance.fill_leverage_tiers')
-        class_mocker.patch('freqtrade.exchange.exchange.Exchange.fetch_trading_fees')
+        class_mocker.patch(f'{EXMS}.fetch_trading_fees')
         class_mocker.patch('freqtrade.exchange.okx.Okx.additional_exchange_init')
         class_mocker.patch('freqtrade.exchange.binance.Binance.additional_exchange_init')
         class_mocker.patch('freqtrade.exchange.bybit.Bybit.additional_exchange_init')
-        class_mocker.patch('freqtrade.exchange.exchange.Exchange.load_cached_leverage_tiers',
-                           return_value=None)
-        class_mocker.patch('freqtrade.exchange.exchange.Exchange.cache_leverage_tiers')
+        class_mocker.patch(f'{EXMS}.load_cached_leverage_tiers', return_value=None)
+        class_mocker.patch(f'{EXMS}.cache_leverage_tiers')
 
         exchange = ExchangeResolver.load_exchange(
             request.param, exchange_conf, validate=True, load_leverage_tiers=True)
@@ -294,8 +356,8 @@ class TestCCXTExchange():
             'stoploss': 'limit',
             })
 
-        if exchangename == 'gateio':
-            # gateio doesn't have market orders on spot
+        if exchangename == 'gate':
+            # gate doesn't have market orders on spot
             return
         exch.validate_ordertypes({
             'entry': 'market',
@@ -332,6 +394,9 @@ class TestCCXTExchange():
                 assert isinstance(po['timestamp'], int)
                 assert isinstance(po['price'], float)
                 assert po['price'] == 15.5
+                if po['average'] is not None:
+                    assert isinstance(po['average'], float)
+                    assert po['average'] == 15.5
                 assert po['symbol'] == 'SOL/USDT'
                 assert isinstance(po['amount'], float)
                 assert po['amount'] == 1.1
@@ -355,7 +420,7 @@ class TestCCXTExchange():
 
     def test_ccxt_fetch_tickers_futures(self, exchange_futures: EXCHANGE_FIXTURE_TYPE):
         exch, exchangename = exchange_futures
-        if not exch or exchangename in ('gateio'):
+        if not exch or exchangename in ('gate'):
             # exchange_futures only returns values for supported exchanges
             return
 
@@ -395,10 +460,12 @@ class TestCCXTExchange():
         assert len(l2['bids']) >= 1
         l2_limit_range = exch._ft_has['l2_limit_range']
         l2_limit_range_required = exch._ft_has['l2_limit_range_required']
-        if exchangename == 'gateio':
-            # TODO: Gateio is unstable here at the moment, ignoring the limit partially.
+        if exchangename == 'gate':
+            # TODO: Gate is unstable here at the moment, ignoring the limit partially.
             return
-        for val in [1, 2, 5, 25, 100]:
+        for val in [1, 2, 5, 25, 50, 100]:
+            if val > 50 and exchangename == 'bybit':
+                continue
             l2 = exch.fetch_l2_order_book(pair, val)
             if not l2_limit_range or val in l2_limit_range:
                 if val > 50:
@@ -461,16 +528,21 @@ class TestCCXTExchange():
             assert res[1] == timeframe
             assert res[2] == candle_type
             candles = res[3]
-            candle_count = exchange.ohlcv_candle_limit(timeframe, candle_type, since_ms) * 0.9
-            candle_count1 = (now.timestamp() * 1000 - since_ms) // timeframe_ms
-            assert len(candles) >= min(candle_count, candle_count1)
+            factor = 0.9
+            candle_count = exchange.ohlcv_candle_limit(timeframe, candle_type, since_ms) * factor
+            candle_count1 = (now.timestamp() * 1000 - since_ms) // timeframe_ms * factor
+            assert len(candles) >= min(candle_count, candle_count1), \
+                f"{len(candles)} < {candle_count} in {timeframe}, Offset: {offset} {factor}"
             assert candles[0][0] == since_ms or (since_ms + timeframe_ms)
 
     def test_ccxt__async_get_candle_history(self, exchange: EXCHANGE_FIXTURE_TYPE):
         exc, exchangename = exchange
-        # For some weired reason, this test returns random lengths for bittrex.
-        if not exc._ft_has['ohlcv_has_history'] or exchangename in ('bittrex'):
-            return
+        if exchangename in ('bittrex'):
+            # For some weired reason, this test returns random lengths for bittrex.
+            pytest.skip("Exchange doesn't provide stable ohlcv history")
+
+        if not exc._ft_has['ohlcv_has_history']:
+            pytest.skip("Exchange does not support candle history")
         pair = EXCHANGES[exchangename]['pair']
         timeframe = EXCHANGES[exchangename]['timeframe']
         self.ccxt__async_get_candle_history(

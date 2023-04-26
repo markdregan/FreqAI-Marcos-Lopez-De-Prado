@@ -18,8 +18,10 @@ from freqtrade.data.history import load_pair_history
 from freqtrade.enums import CandleType, RPCMessageType, RunMode
 from freqtrade.exceptions import ExchangeError, OperationalException
 from freqtrade.exchange import Exchange, timeframe_to_seconds
+from freqtrade.exchange.types import OrderBook
 from freqtrade.misc import append_candles_to_dataframe
 from freqtrade.rpc import RPCManager
+from freqtrade.rpc.rpc_types import RPCAnalyzedDFMsg
 from freqtrade.util import PeriodicCache
 
 
@@ -117,8 +119,7 @@ class DataProvider:
         :param new_candle: This is a new candle
         """
         if self.__rpc:
-            self.__rpc.send_msg(
-                {
+            msg: RPCAnalyzedDFMsg = {
                     'type': RPCMessageType.ANALYZED_DF,
                     'data': {
                         'key': pair_key,
@@ -126,7 +127,7 @@ class DataProvider:
                         'la': datetime.now(timezone.utc)
                     }
                 }
-            )
+            self.__rpc.send_msg(msg)
             if new_candle:
                 self.__rpc.send_msg({
                         'type': RPCMessageType.NEW_CANDLE,
@@ -423,10 +424,8 @@ class DataProvider:
         """
         if self._exchange is None:
             raise OperationalException(NO_EXCHANGE_EXCEPTION)
-        if helping_pairs:
-            self._exchange.refresh_latest_ohlcv(pairlist + helping_pairs)
-        else:
-            self._exchange.refresh_latest_ohlcv(pairlist)
+        final_pairs = (pairlist + helping_pairs) if helping_pairs else pairlist
+        self._exchange.refresh_latest_ohlcv(final_pairs)
 
     @property
     def available_pairs(self) -> ListPairsWithTimeframes:
@@ -489,7 +488,7 @@ class DataProvider:
         except ExchangeError:
             return {}
 
-    def orderbook(self, pair: str, maximum: int) -> Dict[str, List]:
+    def orderbook(self, pair: str, maximum: int) -> OrderBook:
         """
         Fetch latest l2 orderbook data
         Warning: Does a network request - so use with common sense.

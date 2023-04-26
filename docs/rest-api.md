@@ -9,9 +9,6 @@ This same command can also be used to update freqUI, should there be a new relea
 
 Once the bot is started in trade / dry-run mode (with `freqtrade trade`) - the UI will be available under the configured port below (usually `http://127.0.0.1:8080`).
 
-!!! info "Alpha release"
-    FreqUI is still considered an alpha release - if you encounter bugs or inconsistencies please open a [FreqUI issue](https://github.com/freqtrade/frequi/issues/new/choose).
-
 !!! Note "developers"
     Developers should not use this method, but instead use the method described in the [freqUI repository](https://github.com/freqtrade/frequi) to get the source-code of freqUI.
 
@@ -163,7 +160,7 @@ python3 scripts/rest_client.py --config rest_config.json <command> [optional par
 | `strategy <strategy>` | Get specific Strategy content. **Alpha**
 | `available_pairs` | List available backtest data. **Alpha**
 | `version` | Show version.
-| `sysinfo` | Show informations about the system load.
+| `sysinfo` | Show information about the system load.
 | `health` | Show bot health (last bot loop).
 
 !!! Warning "Alpha status"
@@ -191,6 +188,11 @@ blacklist
 	Show the current blacklist.
 
         :param add: List of coins to add (example: "BNB/BTC")
+
+cancel_open_order
+	Cancel open order for trade.
+
+        :param trade_id: Cancels open orders for this trade.
 
 count
 	Return the amount of open trades.
@@ -274,7 +276,6 @@ reload_config
 	Reload configuration.
 
 show_config
-
         Returns part of the configuration, relevant for trading operations.
 
 start
@@ -319,6 +320,7 @@ version
 
 whitelist
 	Show the current whitelist.
+
 
 ```
 
