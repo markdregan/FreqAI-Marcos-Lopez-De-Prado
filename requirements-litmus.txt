@@ -1,6 +1,15 @@
-imbalanced-learn
-zigzag
+# Must have
 pangres
 feature_engine
+
+# Optional if used
+imbalanced-learn
+zigzag
 optuna
 BorutaShap
+fracdiff
+tscv
+
+# Nice to have for analysis
+pandas_datareader
+pandas-profiling

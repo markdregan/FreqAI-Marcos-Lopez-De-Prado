@@ -1,4 +1,9 @@
+import logging
 import numpy as np
+import pandas as pd
+import pandas_ta as pta
+import talib.abstract as ta
+
 from feature_engine.creation import CyclicalFeatures
 from freqtrade.strategy import IStrategy, BooleanParameter, IntParameter
 from functools import reduce
@@ -6,11 +11,6 @@ from freqtrade.litmus.label_helpers import tripple_barrier
 from freqtrade.litmus import indicator_helpers as ih
 from pandas import DataFrame
 from technical import qtpylib
-
-import logging
-import pandas as pd
-import pandas_ta as pta
-import talib.abstract as ta
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ pd.set_option('display.max_columns', 500)
 pd.set_option('display.width', 2000)
 
 
-class LitmusMetaStrategy(IStrategy):
+class LitmusMLDPStrategy(IStrategy):
     """
     to run this:
       freqtrade trade --strategy LitmusMetaStrategy
@@ -50,21 +50,17 @@ class LitmusMetaStrategy(IStrategy):
                 "primary_enter_long_tbm": {"color": "PaleGreen"},
                 "primary_enter_short_tbm": {"color": "Salmon"},
             },
-            "Trees": {
-                "num_trees_&-primary_enter_long": {"color": "PaleGreen"},
-                "num_trees_&-primary_enter_short": {"color": "Salmon"}
-            },
             "Time": {
                 "total_time_&-primary_enter_long": {"color": "PaleGreen"},
                 "total_time_&-primary_enter_short": {"color": "Salmon"}
             },
-            "Recall": {
-                "resulting_recall_&-primary_enter_long": {"color": "PaleGreen"},
-                "resulting_recall_&-primary_enter_short": {"color": "Salmon"}
+            "Returns": {
+                "value_max_returns_&-primary_enter_long": {"color": "PaleGreen"},
+                "value_max_returns_&-primary_enter_short": {"color": "Salmon"}
             },
-            "CV": {
-                "best_cv_score_&-primary_enter_long": {"color": "PaleGreen"},
-                "best_cv_score_&-primary_enter_short": {"color": "Salmon"}
+            "Feat": {
+                "num_features_selected_&-primary_enter_long": {"color": "PaleGreen"},
+                "num_features_selected_&-primary_enter_short": {"color": "Salmon"}
             }
         },
     }
@@ -75,18 +71,15 @@ class LitmusMetaStrategy(IStrategy):
 
     # ROI table:
     minimal_roi = {
-        "0": 0.05,
-        "80": 0
+        "0": 1.0,
+        "60": 0
     }
 
     # Stoploss:
-    stoploss = -0.05
+    stoploss = -0.03
 
-    # Trailing stop:
-    trailing_stop = False
-    trailing_stop_positive = 0.198
-    trailing_stop_positive_offset = 0.245
-    trailing_only_offset_is_reached = False
+    # Stop loss config
+    trailing_stop = True
 
     # Other strategy flags
     process_only_new_candles = True
@@ -94,7 +87,7 @@ class LitmusMetaStrategy(IStrategy):
     can_short = True
     startup_candle_count = 120
 
-    @property
+    """@property
     def protections(self):
         prot = []
         prot.append({
@@ -113,7 +106,7 @@ class LitmusMetaStrategy(IStrategy):
                 "only_per_side": False
             })
 
-        return prot
+        return prot"""
 
     def feature_engineering_expand_all(self, dataframe, period, **kwargs):
         """
@@ -186,10 +179,17 @@ class LitmusMetaStrategy(IStrategy):
 
         Will not expand: `indicator_periods_candles`
         """
+        t = 20
 
-        dataframe["%-pct-change"] = dataframe["close"].pct_change()
-        dataframe["%-raw_volume"] = dataframe["volume"]
         dataframe["%-raw_price"] = dataframe["close"]
+        dataframe["%-price_change"] = dataframe["close"].pct_change()
+        dataframe["%-volatility_price"] = \
+            dataframe["%-price_change"].rolling(t).std() * np.sqrt(t)
+
+        dataframe["%-raw_volume"] = dataframe["volume"]
+        dataframe["%-volume_change"] = np.log(dataframe['volume'] / dataframe['volume'].shift())
+        dataframe["%-volatility_volume"] = \
+            dataframe["%-volume_change"].rolling(t).std() * np.sqrt(t)
 
         return dataframe
 
@@ -234,9 +234,13 @@ class LitmusMetaStrategy(IStrategy):
         dataframe["mm_bb_middleband"] = bollinger["mid"]
         dataframe["mm_bb_upperband"] = bollinger["upper"]
 
+        dataframe["psar"] = ta.SAR(
+            dataframe["high"], dataframe["low"], acceleration=0.01, maximum=0.2)
+
         # Primary: Enter Long
-        dataframe["primary_enter_long"] = np.where(
-            dataframe["close"] < dataframe["mm_bb_lowerband"], True, False)
+        """dataframe["primary_enter_long"] = qtpylib.crossed_above(
+            dataframe["psar"], dataframe["psar"].shift(1))"""
+        dataframe["primary_enter_long"] = dataframe["close"] < dataframe["mm_bb_lowerband"]
 
         # Long: TBM Labeling
         logger.info("Starting TBM: Long")
@@ -253,6 +257,7 @@ class LitmusMetaStrategy(IStrategy):
         )
 
         # Long: Primary model performance a feature for meta model
+        logger.info("Starting model performance: Long")
         dataframe["masked_shift_long_tbm"] = np.where(
             dataframe["primary_enter_long"].shift(window),
             dataframe["primary_enter_long_tbm"].shift(window),
@@ -268,8 +273,9 @@ class LitmusMetaStrategy(IStrategy):
             min_periods=0).apply(lambda x: x[~np.isnan(x)].count()).fillna(0)
 
         # Primary: Enter Short
-        dataframe["primary_enter_short"] = np.where(
-            dataframe["close"] > dataframe["mm_bb_upperband"], True, False)
+        """dataframe["primary_enter_short"] = qtpylib.crossed_below(
+            dataframe["psar"], dataframe["psar"].shift(1))"""
+        dataframe["primary_enter_short"] = dataframe["close"] > dataframe["mm_bb_upperband"]
 
         # Short: TBM Labeling
         logger.info("Starting TBM: Short")
@@ -286,6 +292,7 @@ class LitmusMetaStrategy(IStrategy):
         )
 
         # Short: Primary model performance a feature for meta model
+        logger.info("Starting model performance: Short")
         dataframe["masked_shift_short_tbm"] = np.where(
             dataframe["primary_enter_short"].shift(window),
             dataframe["primary_enter_short_tbm"].shift(window),
@@ -299,6 +306,9 @@ class LitmusMetaStrategy(IStrategy):
         dataframe["%-primary_short_perf_count"] = dataframe["masked_shift_short_tbm"].rolling(
             window=target_params["primary_perf_window"],
             min_periods=0).apply(lambda x: x[~np.isnan(x)].count()).fillna(0)
+
+        # Crude forward-looking return of current candle (Note: cannot be used as feature)
+        dataframe["!-trade_return"] = dataframe["close"].pct_change(window).shift(-window)
 
         return dataframe
 
@@ -336,17 +346,14 @@ class LitmusMetaStrategy(IStrategy):
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> pd.DataFrame:
 
-        # Apply fractional differentiation to OHLCV series
-        # TODO: mregan
-
         dataframe = self.freqai.start(dataframe, metadata, self)
 
         # Add rolling smoothing function over entry thresholds
         smoothing_window = self.freqai_info["trigger_parameters"].get("smoothing_window", 30)
         dataframe["primary_enter_long_threshold"] = dataframe[
-            "desired_precision_threshold_&-primary_enter_long"].rolling(smoothing_window).mean()
+            "threshold_max_returns_&-primary_enter_long"].rolling(smoothing_window).mean()
         dataframe["primary_enter_short_threshold"] = dataframe[
-            "desired_precision_threshold_&-primary_enter_short"].rolling(smoothing_window).mean()
+            "threshold_max_returns_&-primary_enter_short"].rolling(smoothing_window).mean()
 
         return dataframe
 
@@ -374,7 +381,7 @@ class LitmusMetaStrategy(IStrategy):
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> pd.DataFrame:
 
         # Long Exit
-        conditions = [df["close"] > df["mm_bb_upperband"]]
+        conditions = [df["primary_enter_short"]]
 
         if conditions:
             df.loc[
@@ -382,7 +389,7 @@ class LitmusMetaStrategy(IStrategy):
             ] = (1, "primary_exit_long")
 
         # Short Exit
-        conditions = [df["close"] < df["mm_bb_lowerband"]]
+        conditions = [df["primary_enter_long"]]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]

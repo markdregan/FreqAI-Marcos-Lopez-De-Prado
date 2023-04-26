@@ -24,7 +24,9 @@
             "rateLimit": 200
         },
         "pair_whitelist": [
-            "SOL/USDT:USDT"
+            "SOL/USDT:USDT",
+            "LINK/USDT:USDT",
+            "DOGE/USDT:USDT"
         ],
         "pair_blacklist": []
     },
@@ -61,22 +63,22 @@
     "freqai": {
         "enabled": true,
         "purge_old_models": true,
-        "train_period_days": 100,
+        "train_period_days": 70,
         "backtest_period_days": 1,
         "fit_live_predictions_candles": 0,
-        "identifier": "LitmusMetaRFECV",
+        "identifier": "Litmus",
         "fixed_leverage": 1,
         "feature_parameters": {
             "include_timeframes": [
                 "3m",
                 "15m",
-                "2h"
+                "1h"
             ],
             "include_corr_pairlist": [
                 "BTC/USDT:USDT"
             ],
             "label_period_candles": 0,
-            "include_shifted_candles": 2,
+            "include_shifted_candles": 4,
             "DI_threshold": 10,
             "weight_factor": 0.7,
             "principal_component_analysis": false,
@@ -87,91 +89,96 @@
                 "nu": 0.05
             },
             "use_DBSCAN_to_remove_outliers": false,
-            "inlier_metric_window": 40,
+            "inlier_metric_window": 0,
             "stratify_training_data": 0,
-            "indicator_periods_candles": [10, 20, 100],
-            "noise_standard_deviation": 0.03,
-            "reverse_train_test_order": false
+            "indicator_periods_candles": [8, 24, 64, 128],
+            "noise_standard_deviation": 0.00,
+            "reverse_train_test_order": false,
+            "fracdiff": {
+                "enabled": false,
+                "window": 500,
+                "mode": "same",
+                "precision": 0.01,
+                "upper": 10.0,
+                "row_stride": 10
+            }
         },
         "feature_selection": {
-            "drop_weak_rfecv_rank": {
+            "cv": {
+                "cv_n_splits": 3,
+                "cv_gap_before": 2,
+                "cv_gap_after": 2
+            },
+            "drop_weak_features": {
                 "enabled": true,
-                "exclude_rank_threshold": 2,
-                "exclude_ratio_threshold": 0.7,
-                "keep_rank_threshold": 1,
-                "keep_ratio_threshold": 0.9,
-                "chance_excluded": 0.9,
-                "min_num_trials": 5
+                "pct_additional_features": 0.1
             },
             "greedy_selection": {
-                "enabled": true,
-                "threshold": 0.97
+                "enabled": false,
+                "threshold": 0.98
             },
             "drop_rows_meta_model": {
                 "enabled": true
             },
-            "rfecv": {
+            "select_by_shuffle": {
                 "enabled": true,
-                "cv_n_splits": 3,
-                "cv_gap": 100,
-                "min_features_to_select": 50,
-                "step_pct": 0.2,
-                "scoring": "f1_macro",
-                "n_jobs": 6,
-                "n_estimators": 1000,
-                "verbose": 1
-            },
-            "catboost_selection": {
-                "enabled": false,
-                "num_features_select": 100,
-                "steps": 3
-            },
-            "save_feature_importance": {
-                "enabled": true
+                "scoring": "neg_log_loss",
+                "min_threshold": 0.0
             }
         },
         "data_split_parameters": {
-            "test_size": 0.5,
+            "test_size": 0.95,
             "shuffle": false
         },
         "trigger_parameters": {
             "fbeta_entry": 1,
             "fbeta_exit": 1,
             "smoothing_window": 20,
-            "desired_precision": 0.5
+            "desired_precision": 0.35,
+            "trade_cost_pct": 0.001,
+            "slippage_cost_pct": 0.000
         },
-        "target_parameters": {
-            "tmb_long_upper": 0.005,
-            "tmb_long_lower": 0.005,
-            "tmb_long_window": 10,
-            "tmb_short_upper": 0.005,
-            "tmb_short_lower": 0.005,
-            "tmb_short_window": 10,
+        "primary_target_parameters": {
+            "label": ["fast", "slow"],
+            "zigzag_min_growth": [0.003, 0.007],
+            "nearby_threshold": [0.002, 0.002],
+            "forward_pass": [true, true],
+            "reverse_pass": [false, false],
+            "target_offset": [0, 1]
+        },
+        "secondary_target_parameters": {
+            "tmb_long_upper": 0.015,
+            "tmb_long_lower": 0.007,
+            "tmb_long_window": 30,
+            "tmb_short_upper": 0.007,
+            "tmb_short_lower": 0.015,
+            "tmb_short_window": 30,
             "primary_perf_window": 40
         },
         "model_training_parameters": {
-            "n_estimators": 2000,
-            "loss_function": "MultiClass",
-            "early_stopping_rounds": 200,
-            "task_type": "CPU",
-            "verbose": 50,
-            "allow_writing_files": true
+            "verbose": 200,
+            "loss_function": "MultiClassOneVsAll",
+            "bootstrap_type": "Bayesian",
+            "grow_policy": "Lossguide",
+            "od_type": "IncToDec",
+            "depth": 5,
+            "iterations": 1000,
+            "learning_rate": 0.002
+        },
+        "optuna": {
+            "enabled": false,
+            "pct_triggered": 0.3,
+            "num_trials_to_keep": 40
         },
         "extra_returns_per_train": {
-            "total_time_&-primary_enter_long": 0,
-            "total_time_&-primary_enter_short": 0,
-            "num_trees_&-primary_enter_long": 0,
-            "num_trees_&-primary_enter_short": 0,
-            "fbeta_entry_thresh_&-primary_enter_long": 0,
-            "fbeta_entry_thresh_&-primary_enter_short": 0,
-            "max_fbeta_entry_&-primary_enter_long": 0,
-            "max_fbeta_entry_&-primary_enter_short": 0,
-            "desired_precision_threshold_&-primary_enter_long": 0,
-            "desired_precision_threshold_&-primary_enter_short": 0,
-            "resulting_recall_&-primary_enter_long": 0,
-            "resulting_recall_&-primary_enter_short": 0,
-            "best_cv_score_&-primary_enter_long": 0,
-            "best_cv_score_&-primary_enter_short": 0
+            "total_time_&-primary_target_slow": 0,
+            "total_time_&-meta_target": 0,
+            "num_features_selected_&-primary_target_slow": 0,
+            "num_features_selected_&-meta_target": 0,
+            "threshold_meta_long_max_returns_&-meta_target": 0,
+            "threshold_meta_short_max_returns_&-meta_target": 0,
+            "value_meta_long_max_returns_&-meta_target": 0,
+            "value_meta_short_max_returns_&-meta_target": 0
         }
     },
     "telegram": {

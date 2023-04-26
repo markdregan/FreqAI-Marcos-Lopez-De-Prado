@@ -4,12 +4,14 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
+from BorutaShap import BorutaShap
 from catboost import CatBoostClassifier, Pool, EFstrType, EFeaturesSelectionAlgorithm, EShapCalcType
-from feature_engine.selection import DropCorrelatedFeatures
+from feature_engine.selection import (SmartCorrelatedSelection, RecursiveFeatureAddition,
+                                      DropHighPSIFeatures, DropCorrelatedFeatures)
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
-from freqtrade.litmus.model_helpers import (MergedModel,
-                                            get_rfecv_feature_importance,
+from freqtrade.litmus.model_helpers import (MergedModel, exclude_weak_features,
+                                            get_low_ranked_features_rfe,
                                             threshold_from_optimum_f1,
                                             threshold_from_desired_precision)
 from freqtrade.litmus.db_helpers import save_df_to_db
@@ -131,29 +133,71 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
             y_test = data_dictionary["train_labels"][t]
             weight_test = data_dictionary["train_weights"]
 
+            # Drop low performing features based on feature importance
+            if self.freqai_info["feature_selection"]["drop_weak_feature_importance"].get(
+                    "enabled", False):
+                weak_params = self.freqai_info["feature_selection"]["drop_weak_feature_importance"]
+
+                drop_table = exclude_weak_features(
+                    model=t, pair=dk.pair,
+                    loss_ratio_threshold=weak_params["loss_ratio_threshold"],
+                    chance_excluded=weak_params["chance_excluded"],
+                    min_num_trials=weak_params["min_num_trials"])
+
+                cols_to_drop = drop_table["feature_id"].to_numpy()
+
+                num_cols_before = len(X_train.columns)
+                X_train = X_train.drop(columns=cols_to_drop, errors="ignore")
+                X_test = X_test.drop(columns=cols_to_drop, errors="ignore")
+                num_cols_after = len(X_train.columns)
+
+                logger.info(f"Dropping {num_cols_before-num_cols_after} weak features "
+                            f"based on prior training")
+
             # Drop low performing features based on RFECV rank results
             if self.freqai_info["feature_selection"]["drop_weak_rfecv_rank"].get(
                     "enabled", False):
 
                 rfecv_params = self.freqai_info["feature_selection"]["drop_weak_rfecv_rank"]
 
-                feat_df = get_rfecv_feature_importance(
-                    model=t, pair=dk.pair,
-                    exclude_rank_threshold=rfecv_params["exclude_rank_threshold"],
-                    keep_rank_threshold=rfecv_params["keep_rank_threshold"],
-                    exclude_ratio_threshold=rfecv_params["exclude_ratio_threshold"],
-                    keep_ratio_threshold=rfecv_params["keep_ratio_threshold"],
+                drop_table = get_low_ranked_features_rfe(
+                    model=t, pair=dk.pair, rank_threshold=rfecv_params["rank_threshold"],
+                    loss_ratio_threshold=rfecv_params["loss_ratio_threshold"],
                     chance_excluded=rfecv_params["chance_excluded"],
                     min_num_trials=rfecv_params["min_num_trials"])
 
-                cols_to_drop = feat_df[feat_df["confirm_exclude"]]["feature_id"].to_numpy()
-                cols_to_keep = feat_df[feat_df["confirm_keep"]]["feature_id"].to_numpy()
+                cols_to_drop = drop_table["feature_id"].to_numpy()
 
+                num_cols_before = len(X_train.columns)
                 X_train = X_train.drop(columns=cols_to_drop, errors="ignore")
                 X_test = X_test.drop(columns=cols_to_drop, errors="ignore")
+                num_cols_after = len(X_train.columns)
 
-                logger.info(f"RFECV: Dropping {len(cols_to_drop)} and "
-                            f"keeping {len(cols_to_keep)} features based on prior train cycles.")
+                logger.info(f"Dropping {num_cols_before - num_cols_after} weak features "
+                            f"based on prior RFECV training")
+
+            # Drop High PSI Features
+            if self.freqai_info["feature_selection"]["psi_elimination"].get("enabled", False):
+                num_feat = len(X_train.columns)
+                logger.info(f"Starting PSI Feature Elimination for {num_feat} features")
+
+                # Get config params
+                psi_elimination_params = self.freqai_info["feature_selection"]["psi_elimination"]
+
+                psi_elimination = DropHighPSIFeatures(
+                    split_col=None, split_frac=psi_elimination_params["split_frac"],
+                    split_distinct=False, cut_off=None, switch=False,
+                    threshold=psi_elimination_params["threshold"], bins=10,
+                    strategy="equal_frequency", min_pct_empty_bins=0.0001, missing_values="ignore",
+                    variables=None, confirm_variables=False)
+
+                X_train = psi_elimination.fit_transform(X_train, y_train)
+                X_test = psi_elimination.transform(X_test)
+
+                num_remaining = len(X_train.columns)
+                num_dropped = len(psi_elimination.features_to_drop_)
+                dk.data["extra_returns_per_train"][f"num_dropped_psi_{t}"] = num_dropped
+                logger.info(f"Dropping {num_dropped} high psi features. {num_remaining} remaining.")
 
             # Drop features using Greedy Correlated Selection
             if self.freqai_info["feature_selection"]["greedy_selection"].get("enabled", False):
@@ -163,10 +207,8 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 # Get config params
                 greedy_selection_params = self.freqai_info["feature_selection"]["greedy_selection"]
 
-                cols_to_analyze = [c for c in X_train.columns if c not in cols_to_keep]
-
                 greedy_selection = DropCorrelatedFeatures(
-                    variables=cols_to_analyze, method="pearson",
+                    variables=None, method="pearson",
                     threshold=greedy_selection_params["threshold"], missing_values="ignore",
                     confirm_variables=False)
 
@@ -198,6 +240,57 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 logger.info(f"Meta-model prep: Dropped {len(test_row_keep)} rows from test data. "
                             f"{len(y_test)} remaining.")
 
+            # Drop features using Smart Correlated Selection
+            if self.freqai_info["feature_selection"]["smart_selection"].get("enabled", False):
+                num_feat = len(X_train.columns)
+                logger.info(f"Starting Smart Feature Selection for {num_feat} features")
+
+                # Get config params
+                smart_selection_params = self.freqai_info["feature_selection"]["smart_selection"]
+
+                scs_estimator = RandomForestClassifier(
+                    n_estimators=smart_selection_params["n_estimators"], n_jobs=4)
+
+                smart_selection = SmartCorrelatedSelection(
+                    variables=None, method="pearson",
+                    threshold=smart_selection_params["threshold"], missing_values="ignore",
+                    selection_method="model_performance", estimator=scs_estimator,
+                    scoring=smart_selection_params["scoring"], cv=smart_selection_params["cv"],
+                    confirm_variables=False)
+
+                X_train = smart_selection.fit_transform(X_train, y_train)
+                X_test = smart_selection.transform(X_test)
+
+                num_remaining = len(X_train.columns)
+                num_dropped = len(smart_selection.features_to_drop_)
+                dk.data["extra_returns_per_train"][f"num_dropped_corr_{t}"] = num_dropped
+                logger.info(f"Dropping {num_dropped} correlated features. "
+                            f"{num_remaining} remaining.")
+
+            # Boruta Feature Selection
+            if self.freqai_info["feature_selection"]["boruta_selection"].get("enabled", False):
+                logger.info(f"Starting boruta for {len(X_train.columns)} features")
+                boruta_params = self.freqai_info["feature_selection"]["boruta_selection"]
+
+                boruta_selector = BorutaShap(
+                    importance_measure=boruta_params["importance_measure"],
+                    percentile=boruta_params["percentile"],
+                    classification=True)
+                boruta_selector.fit(
+                    X=X_train, y=y_train, n_trials=boruta_params["n_trials"],
+                    sample=boruta_params["sample"],
+                    train_or_test=boruta_params["train_or_test"],
+                    normalize=boruta_params["normalize"], verbose=boruta_params["verbose"])
+
+                # Incase there are undecided features
+                if boruta_params.get("drop_tentative", False):
+                    boruta_selector.TentativeRoughFix()
+
+                X_train = boruta_selector.Subset()
+                X_test = X_test.loc[:, X_train.columns]
+
+                logger.info(f"Boruta selected {len(X_train.columns)} features")
+
             # RFECV: Recursive Feature Elimination with Cross Validation
             if self.freqai_info["feature_selection"]["rfecv"].get("enabled", False):
                 num_feat = len(X_train.columns)
@@ -209,7 +302,7 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 min_features_to_select = rfecv_params.get("min_features_to_select", 1)
                 cv_n_splits = rfecv_params.get("cv_n_splits", 5)
                 cv_gap = rfecv_params.get("cv_gap", 100)
-                step = int(num_feat * rfecv_params.get("step_pct", 0.05))
+                step = rfecv_params.get("step", 10)
                 scoring = rfecv_params.get("scoring", "f1_macro")
                 n_jobs = rfecv_params.get("n_jobs", 1)
                 verbose = rfecv_params.get("n_jobs", 0)
@@ -242,19 +335,48 @@ class LitmusMultiTargetClassifier(IFreqaiModel):
                 # Store feature ranks to database
                 feat_rank = rfecv.ranking_
                 feat_id = original_col_names
-                best_cv_score = rfecv.cv_results_["mean_test_score"].max()
+                cv_score_mean = rfecv.cv_results_["mean_test_score"].mean()
+                cv_score_std = rfecv.cv_results_["std_test_score"].mean()
                 feat_rank_df = pd.DataFrame(
                     np.column_stack([feat_id, feat_rank]), columns=["feature_id", "feature_rank"])
                 feat_rank_df["train_time"] = time()
                 feat_rank_df["pair"] = dk.pair
                 feat_rank_df["model"] = t
-                feat_rank_df["best_cv_score"] = best_cv_score
+                feat_rank_df["cv_score_mean"] = cv_score_mean
+                feat_rank_df["cv_score_std"] = cv_score_std
                 feat_rank_df.set_index(
                     keys=["model", "train_time", "pair", "feature_id"], inplace=True)
                 save_df_to_db(df=feat_rank_df, table_name="feature_rfecv_rank")
 
                 # Save metrics for plotting
-                dk.data["extra_returns_per_train"][f"best_cv_score_{t}"] = best_cv_score
+                dk.data["extra_returns_per_train"][f"cv_score_mean_{t}"] = cv_score_mean
+                dk.data["extra_returns_per_train"][f"cv_score_std_{t}"] = cv_score_std
+
+            # Recursive feature addition
+            if self.freqai_info["feature_selection"]["recursive_addition"].get(
+                    "enabled", False):
+                num_feat = len(X_train.columns)
+                logger.info(f"Starting RFA Process for {num_feat} features")
+
+                # Get config params
+                elimination_params = self.freqai_info["feature_selection"]["recursive_addition"]
+
+                sbs_estimator = RandomForestClassifier(
+                    n_estimators=elimination_params["n_estimators"], n_jobs=4)
+
+                feature_elimination = RecursiveFeatureAddition(
+                    estimator=sbs_estimator, scoring=elimination_params["scoring"],
+                    cv=elimination_params["cv"], threshold=elimination_params["threshold"],
+                    variables=None, confirm_variables=False)
+
+                X_train = feature_elimination.fit_transform(X_train, y_train)
+                X_test = feature_elimination.transform(X_test)
+
+                num_remaining = len(X_train.columns)
+                num_dropped = len(feature_elimination.features_to_drop_)
+                dk.data["extra_returns_per_train"][f"num_dropped_model_{t}"] = num_dropped
+                logger.info(f"Dropping {num_dropped} features with poor performance. "
+                            f"{num_remaining} remaining.")
 
             # Create Pool objs for catboost
             train_data = Pool(

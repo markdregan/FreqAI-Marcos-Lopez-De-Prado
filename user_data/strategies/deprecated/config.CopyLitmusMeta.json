@@ -94,32 +94,66 @@
             "reverse_train_test_order": false
         },
         "feature_selection": {
+            "drop_weak_feature_importance": {
+                "enabled": false,
+                "loss_ratio_threshold": 0.3,
+                "chance_excluded": 0.9,
+                "min_num_trials": 10
+            },
             "drop_weak_rfecv_rank": {
                 "enabled": true,
-                "exclude_rank_threshold": 2,
-                "exclude_ratio_threshold": 0.7,
-                "keep_rank_threshold": 1,
-                "keep_ratio_threshold": 0.9,
-                "chance_excluded": 0.9,
+                "rank_threshold": 5,
+                "loss_ratio_threshold": 0.7,
+                "chance_excluded": 0.8,
                 "min_num_trials": 5
+            },
+            "psi_elimination": {
+                "enabled": false,
+                "split_frac": 0.5,
+                "threshold": 1.5
             },
             "greedy_selection": {
                 "enabled": true,
-                "threshold": 0.97
+                "threshold": 0.99
             },
             "drop_rows_meta_model": {
                 "enabled": true
+            },
+            "smart_selection": {
+                "enabled": false,
+                "n_estimators": 1000,
+                "threshold": 0.80,
+                "scoring": "f1_macro",
+                "cv": 3
+            },
+            "boruta_selection": {
+                "enabled": false,
+                "importance_measure": "gini",
+                "percentile": 80,
+                "n_trials": 100,
+                "drop_tentative": true,
+                "sample": false,
+                "train_or_test": "test",
+                "normalize": true,
+                "verbose": false
             },
             "rfecv": {
                 "enabled": true,
                 "cv_n_splits": 3,
                 "cv_gap": 100,
                 "min_features_to_select": 50,
-                "step_pct": 0.2,
+                "step": 10,
                 "scoring": "f1_macro",
                 "n_jobs": 6,
                 "n_estimators": 1000,
                 "verbose": 1
+            },
+            "recursive_addition": {
+                "enabled": false,
+                "n_estimators": 1000,
+                "scoring": "f1_macro",
+                "cv": 3,
+                "threshold": 0.0
             },
             "catboost_selection": {
                 "enabled": false,
@@ -170,8 +204,10 @@
             "desired_precision_threshold_&-primary_enter_short": 0,
             "resulting_recall_&-primary_enter_long": 0,
             "resulting_recall_&-primary_enter_short": 0,
-            "best_cv_score_&-primary_enter_long": 0,
-            "best_cv_score_&-primary_enter_short": 0
+            "cv_score_mean_&-primary_enter_long": 0,
+            "cv_score_mean_&-primary_enter_short": 0,
+            "cv_score_std_&-primary_enter_long": 0,
+            "cv_score_std_&-primary_enter_short": 0
         }
     },
     "telegram": {
