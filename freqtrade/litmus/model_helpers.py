@@ -1,5 +1,6 @@
 # Helper functions for models
 import logging
+
 import numpy as np
 
 
@@ -63,6 +64,7 @@ def threshold_from_optimum_f1(precision, recall, thresholds, beta):
     max_f1_thresh = thresholds[np.argmax(f1_scores)]
 
     return max_f1, max_f1_thresh
+
 
 def threshold_from_desired_precision(precision, recall, thresholds, desired_precision=0.9):
     """Compute the threshold that corresponds to a min model precision"""
