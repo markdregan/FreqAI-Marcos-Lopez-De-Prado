@@ -28,7 +28,7 @@ def get_best_hyperopt_params(study_name, storage_name):
 def get_ho_objective(trial: optuna.Trial, X_train, y_train, X_test, y_test) -> float:
 
     ho_params = {
-        "objective": "Logloss",
+        "objective": trial.suggest_categorical("MultiClassOneVsAll", "MultiClass"),
         "iterations": trial.suggest_int("iterations", 100, 2000),
         "learning_rate": trial.suggest_float("learning_rate", 1e-3, 1.0, log=True),
         "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 1e-8, 100.0, log=True),
@@ -42,7 +42,7 @@ def get_ho_objective(trial: optuna.Trial, X_train, y_train, X_test, y_test) -> f
             "grow_policy", ["SymmetricTree", "Depthwise", "Lossguide"]),
         "od_type": trial.suggest_categorical("od_type", ["IncToDec", "Iter"]),
         "od_wait": trial.suggest_int("od_wait", 10, 50),
-        "eval_metric": "Logloss"
+        "eval_metric": "MultiClass"
     }
 
     if ho_params["bootstrap_type"] == "Bayesian":

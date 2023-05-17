@@ -1,3 +1,4 @@
 *.py    eol=lf
 *.sh    eol=lf
 *.ps1   eol=crlf
+*.ipynb filter=lfs diff=lfs merge=lfs -text

@@ -3,7 +3,10 @@ import time
 
 import numpy as np
 import pandas as pd
+import sqlite3
+import sqlalchemy
 
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +17,8 @@ def get_unimportant_features(model: str, pair: str, pct_additional_features: flo
     # TODO: Make sure at least N trials complete before feature deemed unimportant
 
     # Read trial + win data from sqlite
-    connection_string = "sqlite:///litmus.sqlite"
-    timestamp_in_past = time.time() - 10 * 24 * 60 * 60
+    connection = sqlite3.connect("litmus.sqlite")
+    timestamp_in_past = time.time() - 100 * 24 * 60 * 60
     sql = f"""
         SELECT feature_id, important_feature, train_time
         FROM feature_shuffle_selection
@@ -24,10 +27,12 @@ def get_unimportant_features(model: str, pair: str, pct_additional_features: flo
         AND train_time > '{timestamp_in_past}'"""
 
     try:
-        data = pd.read_sql_query(sql=sql, con=connection_string)
+        data = pd.read_sql_query(sql, connection)
     except Exception as e:
         logger.info(f"Issue reading from SQL to exclude features {e}")
         return []
+
+    connection.close()
 
     all_features = data["feature_id"].unique()
 

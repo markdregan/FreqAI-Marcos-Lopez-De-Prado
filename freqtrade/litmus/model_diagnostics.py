@@ -1,12 +1,14 @@
 import numpy as np
 import pandas as pd
-from sklearn.metrics import precision_recall_curve
+from sklearn.metrics import precision_recall_curve, classification_report
 
 
 # Multiclass Methods
 
+classes_to_ignore = ["loss", "not_minmax"]
+
 def get_mc_describe_returns(estimator, X, y, returns_df, title):
-    classes_to_describe = [c for c in estimator.classes_ if c not in ["loss", "not_minmax_slow"]]
+    classes_to_describe = [c for c in estimator.classes_ if c not in classes_to_ignore]
     for idx, c in enumerate(classes_to_describe):
         X_copy = X.copy()
         X_copy["pred_proba"] = estimator.predict_proba(X_copy)[:, idx]
@@ -26,7 +28,7 @@ def get_mc_describe_returns(estimator, X, y, returns_df, title):
 
 
 def get_mc_describe_cumprod_returns(estimator, X, y, returns_df, title):
-    classes_to_describe = [c for c in estimator.classes_ if c not in ["loss", "not_minmax_slow"]]
+    classes_to_describe = [c for c in estimator.classes_ if c not in classes_to_ignore]
     for idx, c in enumerate(classes_to_describe):
         X_copy = X.copy()
         X_copy["pred_proba"] = estimator.predict_proba(X_copy)[:, idx]
@@ -77,6 +79,34 @@ def get_mc_threshold_max_cumprod_returns(estimator, X, y, returns_df, target):
     return -999
 
 
+def get_mc_value_max_cumprod_returns(estimator, X, y, returns_df, target):
+    classes_to_describe = [c for c in estimator.classes_]
+    for idx, c in enumerate(classes_to_describe):
+
+        if target == c:
+            X_copy = X.copy()
+            X_copy["pred_proba"] = estimator.predict_proba(X_copy)[:, idx]
+            X_copy = X_copy.sort_values(by="pred_proba", ascending=False)
+
+            if "short" in c:
+                return_col = "returns_short"
+            else:
+                return_col = "returns_long"
+
+            returns = returns_df.loc[X_copy.index, return_col]
+            X_copy["cumprod_returns"] = returns.cumprod()
+
+            max_cumprod_returns_idx = X_copy["cumprod_returns"].argmax()
+            max_cumprod_returns_value = X_copy.iloc[max_cumprod_returns_idx]["cumprod_returns"]
+
+            return max_cumprod_returns_value
+        else:
+            # Loop through remaining classes
+            continue
+
+    return -999
+
+
 """TODO
 - Get threshold for max cum prod returns - allowing class to be specified
 - Add trade cost to long and short situations appropriately
@@ -84,7 +114,7 @@ def get_mc_threshold_max_cumprod_returns(estimator, X, y, returns_df, target):
 
 
 def get_mc_describe_precision_recall(estimator, X, y, title):
-    classes_to_describe = [c for c in estimator.classes_ if c not in ["loss", "not_minmax_slow"]]
+    classes_to_describe = [c for c in estimator.classes_ if c not in classes_to_ignore]
     for idx, c in enumerate(classes_to_describe):
         precision, recall, thresholds = precision_recall_curve(
             y, estimator.predict_proba(X)[:, idx], pos_label=c)
@@ -97,6 +127,18 @@ def get_mc_describe_precision_recall(estimator, X, y, title):
             pd.cut(pr_summary_df["thresholds"], bins=bins)).mean()
         print(f"Precision Recall by Threshold: {title} ({c})")
         print(pr_agg_df)
+
+    return 0
+
+
+def get_mc_describe_classification_report(estimator, X, y, title):
+    X_copy = X.copy()
+    X_copy["pred"] = estimator.predict(X_copy)
+
+    stats = classification_report(y_true=y, y_pred=X_copy["pred"])
+
+    print(f"Classification Report: {title}")
+    print(stats)
 
     return 0
 

@@ -25,6 +25,8 @@
         },
         "pair_whitelist": [
             "SOL/USDT:USDT",
+            "ADA/USDT:USDT",
+            "ETH/USDT:USDT",
             "LINK/USDT:USDT",
             "DOGE/USDT:USDT"
         ],
@@ -63,11 +65,11 @@
     "freqai": {
         "enabled": true,
         "purge_old_models": true,
-        "train_period_days": 70,
+        "train_period_days": 100,
         "backtest_period_days": 1,
         "fit_live_predictions_candles": 0,
         "identifier": "Litmus",
-        "fixed_leverage": 1,
+        "fixed_leverage": 3,
         "feature_parameters": {
             "include_timeframes": [
                 "3m",
@@ -78,7 +80,7 @@
                 "BTC/USDT:USDT"
             ],
             "label_period_candles": 0,
-            "include_shifted_candles": 4,
+            "include_shifted_candles": 3,
             "DI_threshold": 10,
             "weight_factor": 0.7,
             "principal_component_analysis": false,
@@ -86,13 +88,13 @@
             "use_SVM_to_remove_outliers": false,
             "svm_params": {
                 "shuffle": false,
-                "nu": 0.05
+                "nu": 0.01
             },
             "use_DBSCAN_to_remove_outliers": false,
             "inlier_metric_window": 0,
             "stratify_training_data": 0,
             "indicator_periods_candles": [8, 24, 64, 128],
-            "noise_standard_deviation": 0.00,
+            "noise_standard_deviation": 0.001,
             "reverse_train_test_order": false,
             "fracdiff": {
                 "enabled": false,
@@ -123,36 +125,37 @@
             "select_by_shuffle": {
                 "enabled": true,
                 "scoring": "neg_log_loss",
-                "min_threshold": 0.0
+                "min_threshold": 0.00
             }
         },
         "data_split_parameters": {
             "test_size": 0.95,
             "shuffle": false
         },
-        "trigger_parameters": {
-            "fbeta_entry": 1,
-            "fbeta_exit": 1,
+        "entry_parameters": {
             "smoothing_window": 20,
-            "desired_precision": 0.35,
             "trade_cost_pct": 0.001,
             "slippage_cost_pct": 0.000
         },
+        "exit_parameters": {
+            "exit_trigger_enabled": false,
+            "sl_exit_trigger_enabled": true,
+            "sl_exit_trigger_pct": 0.01
+        },
         "primary_target_parameters": {
-            "label": ["fast", "slow"],
-            "zigzag_min_growth": [0.003, 0.007],
-            "nearby_threshold": [0.002, 0.002],
-            "forward_pass": [true, true],
-            "reverse_pass": [false, false],
-            "target_offset": [0, 1]
+            "zigzag_min_growth": 0.006,
+            "nearby_threshold": 0.002,
+            "forward_pass": true,
+            "reverse_pass": false,
+            "target_offset": 1
         },
         "secondary_target_parameters": {
-            "tmb_long_upper": 0.015,
-            "tmb_long_lower": 0.007,
-            "tmb_long_window": 30,
-            "tmb_short_upper": 0.007,
-            "tmb_short_lower": 0.015,
-            "tmb_short_window": 30,
+            "tmb_long_upper": 0.003,
+            "tmb_long_lower": 0.003,
+            "tmb_long_window": 200,
+            "tmb_short_upper": 0.003,
+            "tmb_short_lower": 0.003,
+            "tmb_short_window": 200,
             "primary_perf_window": 40
         },
         "model_training_parameters": {
@@ -166,23 +169,30 @@
             "learning_rate": 0.002
         },
         "optuna": {
-            "enabled": false,
-            "pct_triggered": 0.3,
-            "num_trials_to_keep": 40
+            "enabled": true,
+            "pct_triggered": 0.05,
+            "num_trials_to_keep": 200
         },
         "extra_returns_per_train": {
-            "total_time_&-primary_target_slow": 0,
             "total_time_&-meta_target": 0,
-            "num_features_selected_&-primary_target_slow": 0,
             "num_features_selected_&-meta_target": 0,
             "threshold_meta_long_max_returns_&-meta_target": 0,
             "threshold_meta_short_max_returns_&-meta_target": 0,
             "value_meta_long_max_returns_&-meta_target": 0,
-            "value_meta_short_max_returns_&-meta_target": 0
+            "value_meta_short_max_returns_&-meta_target": 0,
+            "value_meta_f1_score_&-meta_target": 0,
+
+            "total_time_&-primary_target": 0,
+            "num_features_selected_&-primary_target": 0,
+            "threshold_meta_long_max_returns_&-primary_target": 0,
+            "threshold_meta_short_max_returns_&-primary_target": 0,
+            "value_meta_long_max_returns_&-primary_target": 0,
+            "value_meta_short_max_returns_&-primary_target": 0,
+            "value_meta_f1_score_&-primary_target": 0
         }
     },
     "telegram": {
-        "enabled": false,
+        "enabled": true,
         "token": "5012333300:AAFiwgqakXFwAsDBLqgXDLTnWqQCMBsYbK4",
         "chat_id": "1963068189"
     },

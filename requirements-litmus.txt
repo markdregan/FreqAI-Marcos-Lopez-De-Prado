@@ -1,6 +1,7 @@
 # Must have
 pangres
 feature_engine
+catboost
 
 # Optional if used
 imbalanced-learn
@@ -12,4 +13,4 @@ tscv
 
 # Nice to have for analysis
 pandas_datareader
-pandas-profiling
+optuna-dashboard

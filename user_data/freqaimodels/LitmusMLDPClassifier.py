@@ -7,6 +7,8 @@ import pandas as pd
 import sys
 import tscv
 
+import fracdiff
+
 from catboost import CatBoostClassifier
 from feature_engine.selection import DropCorrelatedFeatures, SelectByShuffling
 from fracdiff.sklearn import FracdiffStat
@@ -21,7 +23,7 @@ from functools import partial
 from optuna.trial import TrialState
 from pandas import DataFrame
 from pprint import pprint
-from sklearn.metrics import make_scorer, log_loss
+from sklearn.metrics import make_scorer, log_loss, f1_score
 from sklearn.model_selection import cross_validate
 from sklearn.preprocessing import MinMaxScaler
 from time import time
@@ -201,9 +203,9 @@ class LitmusMLDPClassifier(IFreqaiModel):
                     base_params = self.freqai_info["model_training_parameters"]
                     ho_best_params = hyperopt.get_best_hyperopt_params(
                         ho_study_name, ho_storage_name)
-                    ho_best_params.update(base_params)
+                    # ho_best_params.update(base_params)
                     logger.info(f"Optuna ON. Best params loaded: {ho_best_params}")
-                except NameError:
+                except Exception:
                     ho_best_params = self.freqai_info["model_training_parameters"]
                     logger.info(f"Optuna ON. Default params loaded: {ho_best_params}")
             else:
@@ -323,6 +325,7 @@ class LitmusMLDPClassifier(IFreqaiModel):
 
                 all_feature_names = X_train.columns
                 # TODO: Add weight_train to fit_params
+                # X_train = selector.fit_transform(X_train, y_train, sample_weight=weight_train)
                 X_train = selector.fit_transform(X_train, y_train)
 
                 # Store feature ranks to database
@@ -360,7 +363,17 @@ class LitmusMLDPClassifier(IFreqaiModel):
                 param_distributions = {
                     "iterations": optuna.distributions.IntDistribution(800, 1200, log=True),
                     "learning_rate": optuna.distributions.FloatDistribution(1e-3, 0.01, log=True),
-                    "depth": optuna.distributions.IntDistribution(2, 8)
+                    "depth": optuna.distributions.IntDistribution(2, 8),
+                    "l2_leaf_reg": optuna.distributions.FloatDistribution(
+                        1e-8, 100.0, log=True),
+                    "colsample_bylevel": optuna.distributions.FloatDistribution(
+                        0.01, 0.1, log=True),
+                    "bootstrap_type": optuna.distributions.CategoricalDistribution(
+                        choices=("Bayesian", "Bernoulli", "MVS")
+                    ),
+                    "grow_policy": optuna.distributions.CategoricalDistribution(
+                        choices=("SymmetricTree", "Depthwise", "Lossguide")),
+                    "verbose": optuna.distributions.IntDistribution(200, 200)
                 }
 
                 cv_params = self.freqai_info["feature_selection"]["cv"]
@@ -423,8 +436,8 @@ class LitmusMLDPClassifier(IFreqaiModel):
                 gap_after=cv_params["cv_gap_after"])
 
             # Config: Model Diagnostic Scores
-            trade_cost_pct = self.freqai_info["trigger_parameters"].get("trade_cost_pct", 0)
-            slippage_cost_pct = self.freqai_info["trigger_parameters"].get("slippage_cost_pct", 0)
+            trade_cost_pct = self.freqai_info["entry_parameters"].get("trade_cost_pct", 0)
+            slippage_cost_pct = self.freqai_info["entry_parameters"].get("slippage_cost_pct", 0)
             returns_df = pd.DataFrame(index=returns_train.index)
             returns_df["returns_long"] = returns_train + 1.0 - trade_cost_pct - slippage_cost_pct
             returns_df["returns_short"] = -returns_train + 1.0 - trade_cost_pct - slippage_cost_pct
@@ -438,10 +451,17 @@ class LitmusMLDPClassifier(IFreqaiModel):
                     md.get_mc_describe_precision_recall, title=f"{t}"),
                 "ThresholdMCMetaLongMaxCumProdReturns": partial(
                     md.get_mc_threshold_max_cumprod_returns,
-                    returns_df=returns_df, target="a_win_long"),
+                    returns_df=returns_df, target="minima"),
                 "ThresholdMCMetaShortMaxCumProdReturns": partial(
                     md.get_mc_threshold_max_cumprod_returns,
-                    returns_df=returns_df, target="a_win_short"),
+                    returns_df=returns_df, target="maxima"),
+                "ValueMCMetaLongMaxCumProdReturns": partial(
+                    md.get_mc_value_max_cumprod_returns,
+                    returns_df=returns_df, target="minima"),
+                "ValueMCMetaShortMaxCumProdReturns": partial(
+                    md.get_mc_value_max_cumprod_returns,
+                    returns_df=returns_df, target="maxima"),
+                "ValueMCMetaF1ScoreMacro": make_scorer(f1_score, average='macro')
             }
 
             # fit_params = {"sample_weight": weight_train}
@@ -458,6 +478,17 @@ class LitmusMLDPClassifier(IFreqaiModel):
                 dk.data["extra_returns_per_train"][f"threshold_meta_short_max_returns_{t}"] = \
                     perf_scores["test_ThresholdMCMetaShortMaxCumProdReturns"].mean()
 
+            if -999 not in perf_scores["test_ValueMCMetaLongMaxCumProdReturns"]:
+                dk.data["extra_returns_per_train"][f"value_meta_long_max_returns_{t}"] = \
+                    perf_scores["test_ValueMCMetaLongMaxCumProdReturns"].mean()
+
+            if -999 not in perf_scores["test_ValueMCMetaShortMaxCumProdReturns"]:
+                dk.data["extra_returns_per_train"][f"value_meta_short_max_returns_{t}"] = \
+                    perf_scores["test_ValueMCMetaShortMaxCumProdReturns"].mean()
+
+            dk.data["extra_returns_per_train"][f"value_meta_f1_score_{t}"] = \
+                perf_scores["test_ValueMCMetaF1ScoreMacro"].mean()
+
             """dk.data["extra_returns_per_train"][f"threshold_max_returns_{t}"] = perf_scores[
                 "test_ThresholdMaxCumProdReturns"].mean()
             dk.data["extra_returns_per_train"][f"value_max_returns_{t}"] = perf_scores[
@@ -473,7 +504,7 @@ class LitmusMLDPClassifier(IFreqaiModel):
 
             # Train final model
             base_params = self.freqai_info["model_training_parameters"]
-            ho_best_params.update(base_params)
+            # ho_best_params.update(base_params)
             model = CatBoostClassifier(**ho_best_params)
             # model.fit(X_train, y_train, sample_weight=weight_train)
             model.fit(X_train, y_train)
