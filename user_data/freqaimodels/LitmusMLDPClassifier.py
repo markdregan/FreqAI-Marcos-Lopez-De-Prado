@@ -7,8 +7,6 @@ import pandas as pd
 import sys
 import tscv
 
-import fracdiff
-
 from catboost import CatBoostClassifier
 from feature_engine.selection import DropCorrelatedFeatures, SelectByShuffling
 from fracdiff.sklearn import FracdiffStat
@@ -176,7 +174,7 @@ class LitmusMLDPClassifier(IFreqaiModel):
             # Swap train and test data
             X_train = data_dictionary["test_features"]
             y_train = data_dictionary["test_labels"][t]
-            time_weight_train = data_dictionary["test_weights"]
+            time_weight_train = data_dictionary["test_weights"]  # noqa: F841
             returns_train = data_dictionary["test_non_normalized"].loc[:, ["!-trade_return"]]
             scaler = MinMaxScaler(feature_range=(1, 10))
             weight_train = pd.DataFrame(
@@ -185,7 +183,7 @@ class LitmusMLDPClassifier(IFreqaiModel):
 
             X_test = data_dictionary["train_features"]
             y_test = data_dictionary["train_labels"][t]
-            time_weight_test = data_dictionary["train_weights"]
+            time_weight_test = data_dictionary["train_weights"]  # noqa: F841
             returns_test = data_dictionary["train_non_normalized"].loc[:, ["!-trade_return"]]
             weight_test = pd.DataFrame(
                 scaler.transform(np.absolute(returns_test)),
@@ -297,9 +295,11 @@ class LitmusMLDPClassifier(IFreqaiModel):
                 X_train = X_train.loc[train_row_keep_idx, :]
                 y_train = y_train.loc[train_row_keep_idx]
                 weight_train = weight_train.loc[train_row_keep_idx, :]
+                returns_train = returns_train.loc[train_row_keep_idx]
                 X_test = X_test.loc[test_row_keep_idx, :]
                 y_test = y_test.loc[test_row_keep_idx]
                 weight_test = weight_test.loc[test_row_keep_idx, :]
+                returns_test = returns_test.loc[test_row_keep_idx]
 
                 logger.info(f"Meta-model prep: Dropped train rows and {len(y_train)} remaining.")
                 logger.info(f"Meta-model prep: Dropped test rows and {len(y_test)} remaining.")
@@ -442,6 +442,12 @@ class LitmusMLDPClassifier(IFreqaiModel):
             returns_df["returns_long"] = returns_train + 1.0 - trade_cost_pct - slippage_cost_pct
             returns_df["returns_short"] = -returns_train + 1.0 - trade_cost_pct - slippage_cost_pct
 
+            # Trick: Make sure only long entries count towards long metrics below (otherwise 1.0)
+            returns_df["returns_long"] = np.where(
+                X_train["%-trend_long"], returns_df["returns_long"], 1)
+            returns_df["returns_short"] = np.where(
+                X_train["%-trend_short"], returns_df["returns_short"], 1)
+
             perf_mc_metrics = {
                 "EmptyDescribeReturns": partial(
                     md.get_mc_describe_returns, returns_df=returns_df, title=f"{t}"),
@@ -451,16 +457,16 @@ class LitmusMLDPClassifier(IFreqaiModel):
                     md.get_mc_describe_precision_recall, title=f"{t}"),
                 "ThresholdMCMetaLongMaxCumProdReturns": partial(
                     md.get_mc_threshold_max_cumprod_returns,
-                    returns_df=returns_df, target="minima"),
+                    returns_df=returns_df, target="a_win_long"),
                 "ThresholdMCMetaShortMaxCumProdReturns": partial(
                     md.get_mc_threshold_max_cumprod_returns,
-                    returns_df=returns_df, target="maxima"),
+                    returns_df=returns_df, target="a_win_short"),
                 "ValueMCMetaLongMaxCumProdReturns": partial(
                     md.get_mc_value_max_cumprod_returns,
-                    returns_df=returns_df, target="minima"),
+                    returns_df=returns_df, target="a_win_long"),
                 "ValueMCMetaShortMaxCumProdReturns": partial(
                     md.get_mc_value_max_cumprod_returns,
-                    returns_df=returns_df, target="maxima"),
+                    returns_df=returns_df, target="a_win_short"),
                 "ValueMCMetaF1ScoreMacro": make_scorer(f1_score, average='macro')
             }
 

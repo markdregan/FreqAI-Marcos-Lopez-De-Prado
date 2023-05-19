@@ -3,18 +3,17 @@ import numpy as np
 import pandas as pd
 import pandas_ta as pta
 import talib.abstract as ta
-import zigzag
 
 from datetime import datetime, timedelta
 from feature_engine.creation import CyclicalFeatures
 from freqtrade.persistence import Trade
 from freqtrade.strategy import IStrategy
 from functools import reduce
-from freqtrade.litmus.label_helpers import tripple_barrier, nearby_extremes
+from freqtrade.litmus.label_helpers import tripple_barrier
 from freqtrade.litmus import indicator_helpers as ih
 from pandas import DataFrame
 from technical import qtpylib
-from typing import Optional
+from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +47,10 @@ class LitmusSimpleStrategy(IStrategy):
                 "meta_enter_long_threshold": {"color": "ForestGreen"},
                 "meta_enter_short_threshold": {"color": "FireBrick"},
             },
+            "Test": {
+                "b_win": {"color": "Pink"},
+                "c_win": {"color": "Yellow"},
+            },
             "GT": {
                 "primary_enter_long_tbm": {"color": "PaleGreen"},
                 "primary_enter_short_tbm": {"color": "Salmon"},
@@ -77,7 +80,7 @@ class LitmusSimpleStrategy(IStrategy):
     }
 
     # Stoploss:
-    stoploss = -0.05
+    stoploss = -0.02
 
     # Stop loss config
     use_custom_stoploss = True
@@ -181,7 +184,8 @@ class LitmusSimpleStrategy(IStrategy):
 
         return dataframe
 
-    def feature_engineering_expand_basic(self, dataframe, **kwargs) -> pd.DataFrame:
+    def feature_engineering_expand_basic(
+            self, dataframe: DataFrame, metadata: Dict, **kwargs) -> pd.DataFrame:
         """
         Will expand:
         `include_timeframes` * `include_shifted_candles` * `include_corr_pairs`
@@ -202,7 +206,8 @@ class LitmusSimpleStrategy(IStrategy):
 
         return dataframe
 
-    def feature_engineering_standard(self, dataframe, **kwargs) -> pd.DataFrame:
+    def feature_engineering_standard(
+            self, dataframe: DataFrame, metadata: Dict, **kwargs) -> pd.DataFrame:
         """
         *Only functional with FreqAI enabled strategies*
         This optional function will be called once with the dataframe of the base timeframe.
@@ -266,7 +271,7 @@ class LitmusSimpleStrategy(IStrategy):
 
         return dataframe
 
-    def set_freqai_targets(self, dataframe, **kwargs) -> pd.DataFrame:
+    def set_freqai_targets(self, dataframe: DataFrame, metadata: Dict, **kwargs) -> pd.DataFrame:
         """
         *Only functional with FreqAI enabled strategies*
         Required function to set the targets for the model.
@@ -292,24 +297,27 @@ class LitmusSimpleStrategy(IStrategy):
         dataframe["&-meta_target"] = np.select(conditions, choices, default="drop-row")
         dataframe["&-meta_target"] = dataframe["&-meta_target"].fillna(value="drop-row")
 
-        """# Experimental (binary classification models)
-        long_tbm_map = {1: "b_win_long", 0: "loss_long", -1: "loss_long"}
-        dataframe["long_outcome_tbm"] = dataframe["primary_enter_long_tbm"].map(long_tbm_map)
-        dataframe["&-meta_long_target"] = np.select(
-            [dataframe["primary_enter_long"]],
-            [dataframe["long_outcome_tbm"]],
-            default="drop-row")
-        dataframe["&-meta_long_target"] = dataframe["&-meta_long_target"].fillna(value="drop-row")
-        # print(dataframe[["primary_enter_long", "long_outcome_tbm", "&-meta_long_target"]].head(200))
+        print(dataframe.groupby("&-meta_target").size())
 
-        short_tbm_map = {1: "loss_short", 0: "loss_short", -1: "b_win_short"}
-        dataframe["short_outcome_tbm"] = dataframe["primary_enter_short_tbm"].map(short_tbm_map)
-        dataframe["&-meta_short_target"] = np.select(
-            [dataframe["primary_enter_short"]],
-            [dataframe["short_outcome_tbm"]],
-            default="drop-row")
-        dataframe["&-meta_short_target"] = dataframe["&-meta_short_target"].fillna(value="drop-row")
-        # print(dataframe[["primary_enter_short", "short_outcome_tbm", "&-meta_short_target"]].head(200))"""
+        # Experiment: Binary classifier
+        long_tbm_map = {1: "b_win", 0: "b_loss", -1: "b_loss"}
+        dataframe["b_long_outcome_tbm"] = dataframe["primary_enter_long_tbm"].map(long_tbm_map)
+        short_tbm_map = {1: "b_loss", 0: "b_loss", -1: "b_win"}
+        dataframe["b_short_outcome_tbm"] = dataframe["primary_enter_short_tbm"].map(short_tbm_map)
+
+        conditions = [dataframe["primary_enter_long"], dataframe["primary_enter_short"]]
+        choices = [dataframe["b_long_outcome_tbm"], dataframe["b_short_outcome_tbm"]]
+        dataframe["&-meta_target_bin"] = np.select(conditions, choices, default="drop-row")
+        dataframe["&-meta_target_bin"] = dataframe["&-meta_target_bin"].fillna(value="drop-row")
+
+        # Experiment: Binary classifier per side (just long to test)
+        long_tbm_map = {1: "c_win", 0: "c_loss", -1: "c_loss"}
+        dataframe["c_long_outcome_tbm"] = dataframe["primary_enter_long_tbm"].map(long_tbm_map)
+
+        conditions = [dataframe["primary_enter_long"]]
+        choices = [dataframe["c_long_outcome_tbm"]]
+        dataframe["&-meta_target_bin2"] = np.select(conditions, choices, default="drop-row")
+        dataframe["&-meta_target_bin2"] = dataframe["&-meta_target_bin2"].fillna(value="drop-row")
 
         return dataframe
 
@@ -323,13 +331,6 @@ class LitmusSimpleStrategy(IStrategy):
             "threshold_meta_long_max_returns_&-meta_target"].rolling(smoothing_window).mean()
         dataframe["meta_enter_short_threshold"] = dataframe[
             "threshold_meta_short_max_returns_&-meta_target"].rolling(smoothing_window).mean()
-
-        # Experimental: Binary classifiers
-        smoothing_window = self.freqai_info["entry_parameters"].get("smoothing_window", 30)
-        dataframe["meta_bin_enter_long_threshold"] = dataframe[
-            "threshold_meta_long_max_returns_&-meta_long_target"].rolling(smoothing_window).mean()
-        dataframe["meta_bin_enter_short_threshold"] = dataframe[
-            "threshold_meta_short_max_returns_&-meta_short_target"].rolling(smoothing_window).mean()
 
         return dataframe
 
@@ -418,7 +419,7 @@ class LitmusSimpleStrategy(IStrategy):
         if current_profit <= 0.00:
             return -1
 
-        if current_profit > 0.00:
+        if current_profit > 0.01:
             desired_stoploss = current_profit / 2.0
 
             min_sl = 0.01
@@ -427,6 +428,8 @@ class LitmusSimpleStrategy(IStrategy):
             new_sl = max(min(desired_stoploss, max_sl), min_sl)
 
             return new_sl
+
+        return -1
 
     def adjust_trade_position(self, trade: Trade, current_time: datetime,
                               current_rate: float, current_profit: float,
@@ -470,20 +473,20 @@ class LitmusSimpleStrategy(IStrategy):
             # Long Entry
             enter_long = np.where(
                 (last_candle["primary_enter_long"] &
-                 (last_candle["a_win_long"] >= last_candle["meta_enter_long_threshold"]))
-                , True, False)
+                 (last_candle["a_win_long"] >= last_candle["meta_enter_long_threshold"])),
+                True, False)
 
             # Short Entry
             enter_short = np.where(
                 (last_candle["primary_enter_short"] &
-                 (last_candle["a_win_short"] >= last_candle["meta_enter_short_threshold"]))
-                , True, False)
+                 (last_candle["a_win_short"] >= last_candle["meta_enter_short_threshold"])),
+                True, False)
 
             if enter_long or enter_short:
                 # This returns first order stake size
                 filled_entries = trade.select_filled_orders(trade.entry_side)
                 stake_amount = filled_entries[0].cost
                 logger.info(f"Trade adjustment made adding {stake_amount} to {trade.pair}")
-                return stake_amount / self.max_entry_position_adjustment
+                return stake_amount
 
         return None

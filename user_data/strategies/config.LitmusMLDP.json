@@ -7,7 +7,7 @@
     "tradable_balance_ratio": 1,
     "fiat_display_currency": "USD",
     "dry_run": true,
-    "timeframe": "3m",
+    "timeframe": "15m",
     "dry_run_wallet": 10000,
     "process_only_new_candles": true,
     "cancel_open_orders_on_exit": true,
@@ -24,11 +24,9 @@
             "rateLimit": 200
         },
         "pair_whitelist": [
-            "SOL/USDT:USDT",
-            "ADA/USDT:USDT",
             "ETH/USDT:USDT",
-            "LINK/USDT:USDT",
-            "DOGE/USDT:USDT"
+            "XMR/USDT:USDT",
+            "SOL/USDT:USDT"
         ],
         "pair_blacklist": []
     },
@@ -65,16 +63,16 @@
     "freqai": {
         "enabled": true,
         "purge_old_models": true,
-        "train_period_days": 100,
+        "train_period_days": 400,
         "backtest_period_days": 1,
         "fit_live_predictions_candles": 0,
         "identifier": "Litmus",
         "fixed_leverage": 3,
         "feature_parameters": {
             "include_timeframes": [
-                "3m",
                 "15m",
-                "1h"
+                "1h",
+                "4h"
             ],
             "include_corr_pairlist": [
                 "BTC/USDT:USDT"
@@ -138,8 +136,8 @@
             "slippage_cost_pct": 0.000
         },
         "exit_parameters": {
-            "exit_trigger_enabled": false,
-            "sl_exit_trigger_enabled": true,
+            "exit_trigger_enabled": true,
+            "sl_exit_trigger_enabled": false,
             "sl_exit_trigger_pct": 0.01
         },
         "primary_target_parameters": {
@@ -150,12 +148,12 @@
             "target_offset": 1
         },
         "secondary_target_parameters": {
-            "tmb_long_upper": 0.003,
-            "tmb_long_lower": 0.003,
-            "tmb_long_window": 200,
-            "tmb_short_upper": 0.003,
-            "tmb_short_lower": 0.003,
-            "tmb_short_window": 200,
+            "tmb_long_upper": 0.004,
+            "tmb_long_lower": 0.004,
+            "tmb_long_window": 100,
+            "tmb_short_upper": 0.004,
+            "tmb_short_lower": 0.004,
+            "tmb_short_window": 100,
             "primary_perf_window": 40
         },
         "model_training_parameters": {
@@ -170,7 +168,7 @@
         },
         "optuna": {
             "enabled": true,
-            "pct_triggered": 0.05,
+            "pct_triggered": 0.1,
             "num_trials_to_keep": 200
         },
         "extra_returns_per_train": {
