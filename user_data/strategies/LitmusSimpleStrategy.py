@@ -4,13 +4,16 @@ import pandas as pd
 import pandas_ta as pta
 import talib.abstract as ta
 
+from cointanalysis import CointAnalysis
 from datetime import datetime, timedelta
 from feature_engine.creation import CyclicalFeatures
 from freqtrade.persistence import Trade
-from freqtrade.strategy import IStrategy
+from freqtrade.strategy import IStrategy, merge_informative_pair
 from functools import reduce
+from freqtrade.litmus import bet_sizing
 from freqtrade.litmus.label_helpers import tripple_barrier
 from freqtrade.litmus import indicator_helpers as ih
+from freqtrade.litmus import nilux_indicator_helpers as nih
 from pandas import DataFrame
 from technical import qtpylib
 from typing import Optional, Dict
@@ -47,10 +50,6 @@ class LitmusSimpleStrategy(IStrategy):
                 "meta_enter_long_threshold": {"color": "ForestGreen"},
                 "meta_enter_short_threshold": {"color": "FireBrick"},
             },
-            "Test": {
-                "b_win": {"color": "Pink"},
-                "c_win": {"color": "Yellow"},
-            },
             "GT": {
                 "primary_enter_long_tbm": {"color": "PaleGreen"},
                 "primary_enter_short_tbm": {"color": "Salmon"},
@@ -80,18 +79,7 @@ class LitmusSimpleStrategy(IStrategy):
     }
 
     # Stoploss:
-    stoploss = -0.02
-
-    # Stop loss config
-    use_custom_stoploss = True
-    trailing_stop = False
-    trailing_stop_positive = 0.02
-    trailing_stop_positive_offset = 0.00
-    trailing_only_offset_is_reached = False
-
-    # DCA Config
-    position_adjustment_enable = False
-    max_entry_position_adjustment = 3
+    stoploss = -0.05
 
     # Other strategy flags
     process_only_new_candles = True
@@ -120,7 +108,8 @@ class LitmusSimpleStrategy(IStrategy):
 
         return prot"""
 
-    def feature_engineering_expand_all(self, dataframe, period, **kwargs):
+    def feature_engineering_expand_all(self, dataframe: DataFrame, period: int,
+                                       metadata: Dict, **kwargs):
         """
         Will expand:
         `indicator_periods_candles` *`include_timeframes` * `include_shifted_candles`
@@ -204,6 +193,21 @@ class LitmusSimpleStrategy(IStrategy):
         dataframe["%-volatility_volume"] = \
             dataframe["%-volume_change"].rolling(t).std() * np.sqrt(t)
 
+        # Hurst Exp
+        dataframe["%-hurst-exp"] = nih.hurst_exponent(dataframe, lookback=200)
+
+        # Stochastic Momentum Index
+        dataframe["%-smi"] = nih.smi_momentum(dataframe[["high", "low", "close"]])
+        dataframe["%-smi-direction"] = np.where(
+            dataframe["%-smi"] > dataframe["%-smi"].shift(1), 1, 0)
+        dataframe["%-smi"] = nih.smi_momentum(dataframe[["high", "low", "close"]])
+
+        # Nilux Indicators
+        """dataframe[['fisher_cg', 'fisher_sig']] = nih.fisher_cg(dataframe[['high', 'low']])
+        dataframe = nih.exhaustion_bars(dataframe)
+        dataframe = nih.pinbar(dataframe, dataframe["smi"])
+        dataframe = nih.breakouts(dataframe)"""
+
         return dataframe
 
     def feature_engineering_standard(
@@ -233,18 +237,47 @@ class LitmusSimpleStrategy(IStrategy):
         dataframe["%-day_of_week"] = dataframe["date"].dt.dayofweek
         dataframe["%-hour_of_day"] = dataframe["date"].dt.hour
         cyclical_transform = CyclicalFeatures(
-            variables=["%-day_of_week", "%-hour_of_day"], max_values=None, drop_original=True
+            variables=["%-day_of_week", "%-hour_of_day"],
+            max_values={"%-day_of_week": 7, "%-hour_of_day": 24},
+            drop_original=True
         )
         dataframe = cyclical_transform.fit_transform(dataframe)
 
-        # Secondary Model: TBM target features
-        secondary_target_params = self.freqai_info["secondary_target_parameters"]
+        informative = self.dp.historic_ohlcv(pair="BTC/USDT:USDT", timeframe="5m")
 
-        # Long: TBM Labeling
+        # Informative features
+        coint_df = merge_informative_pair(
+            dataframe[["date", "close"]],
+            informative[["date", "close"]],
+            self.timeframe, self.timeframe, ffill=True)
+        coint_df = coint_df[["close", "close_5m"]]
+
+        # Simple BTC derivative features
+        dataframe["%-close_div_btc"] = coint_df["close"] / coint_df["close_5m"]
+        dataframe["%-close_div_btc_change"] = dataframe["%-close_div_btc"].pct_change()
+        dataframe["%-close_div_btc_change_std"] = \
+            dataframe["%-close_div_btc_change"].rolling(50).std() * np.sqrt(50)
+        dataframe["%-close_div_btc_ppo"] = ta.PPO(
+            dataframe["%-close_div_btc"], fastperiod=10, slowperiod=20, matype=0)
+
+        # Cointegration with BTC features
+        coint_params = self.freqai_info["feature_engineering"]["cointegration"]
+        if coint_params["enabled"]:
+            coint = CointAnalysis()
+            coint_pvalue = coint.test(coint_df).pvalue_
+            dataframe["%%-coint_spread_btc"] = coint.fit_transform(coint_df).reshape(-1, 1)
+            dataframe["coint_pvalue"] = coint_pvalue
+            logger.info(f"Cointegration pvalue for {metadata['pair']} is {coint_pvalue}")
+
+        # TBM params
+        secondary_target_params = self.freqai_info["secondary_target_parameters"]
         window = secondary_target_params["tmb_long_window"]
+
+        # Secondary Model: TBM target features
         params = {
             "upper_pct": secondary_target_params["tmb_long_upper"],
-            "lower_pct": secondary_target_params["tmb_long_lower"]
+            "lower_pct": secondary_target_params["tmb_long_lower"],
+            "result": "side"
         }
         dataframe["primary_enter_long_tbm"] = (
             dataframe["close"]
@@ -253,11 +286,22 @@ class LitmusSimpleStrategy(IStrategy):
             .apply(tripple_barrier, kwargs=params)
         )
 
-        # Short: TBM Labeling
-        window = secondary_target_params["tmb_short_window"]
+        params = {
+            "upper_pct": secondary_target_params["tmb_long_upper"],
+            "lower_pct": secondary_target_params["tmb_long_lower"],
+            "result": "value"
+        }
+        dataframe["primary_enter_long_tbm_value"] = (
+            dataframe["close"]
+            .shift(-window)
+            .rolling(window + 1)
+            .apply(tripple_barrier, kwargs=params)
+        )
+
         params = {
             "upper_pct": secondary_target_params["tmb_short_upper"],
-            "lower_pct": secondary_target_params["tmb_short_lower"]
+            "lower_pct": secondary_target_params["tmb_short_lower"],
+            "result": "side"
         }
         dataframe["primary_enter_short_tbm"] = (
             dataframe["close"]
@@ -266,8 +310,105 @@ class LitmusSimpleStrategy(IStrategy):
             .apply(tripple_barrier, kwargs=params)
         )
 
-        # Crude forward-looking return of current candle (Note: cannot be used as feature)
+        params = {
+            "upper_pct": secondary_target_params["tmb_short_upper"],
+            "lower_pct": secondary_target_params["tmb_short_lower"],
+            "result": "value"
+        }
+        dataframe["primary_enter_short_tbm_value"] = (
+            dataframe["close"]
+            .shift(-window)
+            .rolling(window + 1)
+            .apply(tripple_barrier, kwargs=params)
+        )
+
+        # Compute expected win/loss for kelly criterion bet sizing
+        secondary_target_params = self.freqai_info["secondary_target_parameters"]
+        window = secondary_target_params["tmb_long_window"]
+
+        # Compute trade return when TBM barrier crossing occurs
+        dataframe["!-trade_return_long"] = (
+                (dataframe["primary_enter_long_tbm_value"] - dataframe["close"]) /
+                dataframe["close"]
+        )
+        dataframe["!-trade_return_short"] = (
+                (dataframe["primary_enter_short_tbm_value"] - dataframe["close"]) /
+                dataframe["close"]
+        )
+
+        # Mask down to long/short entry triggers only (above proba threshold)
+        dataframe["!-trade_return_long_masked"] = np.where(
+            (dataframe["primary_enter_long"] == True),
+            dataframe["!-trade_return_long"], np.nan)
+        dataframe["!-trade_return_short_masked"] = np.where(
+            (dataframe["primary_enter_short"] == True),
+            dataframe["!-trade_return_short"], np.nan)
+
+        # Compute expected win for long/short trades
+        dataframe["!-trade_return_long_expected_win"] = dataframe.loc[
+            dataframe["!-trade_return_long_masked"] > 0, "!-trade_return_long_masked"].rolling(
+            1000, min_periods=1).mean()
+        dataframe["!-trade_return_long_expected_win"] = dataframe[
+            "!-trade_return_long_expected_win"].fillna(method="backfill").fillna(method="ffill")
+
+        dataframe["!-trade_return_long_expected_loss"] = dataframe.loc[
+            dataframe["!-trade_return_long_masked"] <= 0, "!-trade_return_long_masked"].rolling(
+            1000, min_periods=1).mean()
+        dataframe["!-trade_return_long_expected_loss"] = dataframe[
+            "!-trade_return_long_expected_loss"].fillna(method="backfill").fillna(method="ffill")
+
+        dataframe["!-trade_return_short_expected_win"] = dataframe.loc[
+            dataframe["!-trade_return_short_masked"] <= 0, "!-trade_return_short_masked"].rolling(
+            1000, min_periods=1).mean()
+        dataframe["!-trade_return_short_expected_win"] = dataframe[
+            "!-trade_return_short_expected_win"].fillna(method="backfill").fillna(method="ffill")
+
+        dataframe["!-trade_return_short_expected_loss"] = dataframe.loc[
+            dataframe["!-trade_return_short_masked"] > 0, "!-trade_return_short_masked"].rolling(
+            1000, min_periods=1).mean()
+        dataframe["!-trade_return_short_expected_loss"] = dataframe[
+            "!-trade_return_short_expected_loss"].fillna(method="backfill").fillna(method="ffill")
+
+        # Simple trade return measure for sample_weights
         dataframe["!-trade_return"] = dataframe["close"].pct_change(window).shift(-window)
+
+        # Compute median max price change within window to enable auto TBM threshold setting
+        dataframe["!-trade_return_max_price_change"] = ((
+                                                            dataframe["high"]
+                                                            .shift(-window)
+                                                            .rolling(window + 1)
+                                                            .max()
+                                                        ) - dataframe["close"]) / dataframe["close"]
+
+        dataframe["!-trade_return_min_price_change"] = (
+                                                               dataframe["low"] - dataframe["close"]
+                                                               .shift(-window)
+                                                               .rolling(window + 1)
+                                                               .min()
+                                                       ) / dataframe["close"]
+
+        # Mask down to long/short entry triggers only
+        dataframe["!-trade_return_max_price_change_masked"] = np.where(
+            dataframe["primary_enter_long"], dataframe["!-trade_return_max_price_change"], np.nan)
+        dataframe["!-trade_return_min_price_change_masked"] = np.where(
+            dataframe["primary_enter_short"], dataframe["!-trade_return_min_price_change"], np.nan)
+
+        # Compute rolling median over masked data
+        dataframe["!-trade_return_median_max_price_change"] = dataframe.loc[
+            dataframe["!-trade_return_max_price_change_masked"] > 0,
+            "!-trade_return_max_price_change_masked"].rolling(
+            5000, min_periods=1).median()
+        dataframe["!-trade_return_median_max_price_change"] = dataframe[
+            "!-trade_return_median_max_price_change"].fillna(
+            method="backfill").fillna(method="ffill")
+
+        dataframe["!-trade_return_median_min_price_change"] = dataframe.loc[
+            dataframe["!-trade_return_min_price_change_masked"] > 0,
+            "!-trade_return_min_price_change_masked"].rolling(
+            5000, min_periods=1).median()
+        dataframe["!-trade_return_median_min_price_change"] = dataframe[
+            "!-trade_return_median_min_price_change"].fillna(
+            method="backfill").fillna(method="ffill")
 
         return dataframe
 
@@ -285,39 +426,28 @@ class LitmusSimpleStrategy(IStrategy):
         usage example: dataframe["&-target"] = dataframe["close"].shift(-1) / dataframe["close"]
         """
 
-        # Secondary: Meta Model targets
-        long_tbm_map = {1: "a_win_long", 0: "loss", -1: "loss"}
+        # Long
+        long_tbm_map = {1: "win_long", 0: "loss_long", -1: "loss_long"}
         dataframe["long_outcome_tbm"] = dataframe["primary_enter_long_tbm"].map(long_tbm_map)
-        short_tbm_map = {1: "loss", 0: "loss", -1: "a_win_short"}
-        dataframe["short_outcome_tbm"] = dataframe["primary_enter_short_tbm"].map(short_tbm_map)
-
-        # Merge long/short targets into single column
-        conditions = [dataframe["primary_enter_long"], dataframe["primary_enter_short"]]
-        choices = [dataframe["long_outcome_tbm"], dataframe["short_outcome_tbm"]]
-        dataframe["&-meta_target"] = np.select(conditions, choices, default="drop-row")
-        dataframe["&-meta_target"] = dataframe["&-meta_target"].fillna(value="drop-row")
-
-        print(dataframe.groupby("&-meta_target").size())
-
-        # Experiment: Binary classifier
-        long_tbm_map = {1: "b_win", 0: "b_loss", -1: "b_loss"}
-        dataframe["b_long_outcome_tbm"] = dataframe["primary_enter_long_tbm"].map(long_tbm_map)
-        short_tbm_map = {1: "b_loss", 0: "b_loss", -1: "b_win"}
-        dataframe["b_short_outcome_tbm"] = dataframe["primary_enter_short_tbm"].map(short_tbm_map)
-
-        conditions = [dataframe["primary_enter_long"], dataframe["primary_enter_short"]]
-        choices = [dataframe["b_long_outcome_tbm"], dataframe["b_short_outcome_tbm"]]
-        dataframe["&-meta_target_bin"] = np.select(conditions, choices, default="drop-row")
-        dataframe["&-meta_target_bin"] = dataframe["&-meta_target_bin"].fillna(value="drop-row")
-
-        # Experiment: Binary classifier per side (just long to test)
-        long_tbm_map = {1: "c_win", 0: "c_loss", -1: "c_loss"}
-        dataframe["c_long_outcome_tbm"] = dataframe["primary_enter_long_tbm"].map(long_tbm_map)
 
         conditions = [dataframe["primary_enter_long"]]
-        choices = [dataframe["c_long_outcome_tbm"]]
-        dataframe["&-meta_target_bin2"] = np.select(conditions, choices, default="drop-row")
-        dataframe["&-meta_target_bin2"] = dataframe["&-meta_target_bin2"].fillna(value="drop-row")
+        choices = [dataframe["long_outcome_tbm"]]
+        dataframe["&-meta_target_binary_long"] = np.select(conditions, choices, default="drop-row")
+        dataframe["&-meta_target_binary_long"] = dataframe["&-meta_target_binary_long"].fillna(
+            value="drop-row")
+
+        # Short
+        short_tbm_map = {1: "loss_short", 0: "loss_short", -1: "win_short"}
+        dataframe["short_outcome_tbm"] = dataframe["primary_enter_short_tbm"].map(short_tbm_map)
+
+        conditions = [dataframe["primary_enter_short"]]
+        choices = [dataframe["short_outcome_tbm"]]
+        dataframe["&-meta_target_binary_short"] = np.select(conditions, choices, default="drop-row")
+        dataframe["&-meta_target_binary_short"] = dataframe["&-meta_target_binary_short"].fillna(
+            value="drop-row")
+
+        print(dataframe.groupby("&-meta_target_binary_long").size())
+        print(dataframe.groupby("&-meta_target_binary_short").size())
 
         return dataframe
 
@@ -325,12 +455,18 @@ class LitmusSimpleStrategy(IStrategy):
 
         dataframe = self.freqai.start(dataframe, metadata, self)
 
-        # Meta: Trigger thresholds
+        # Trigger thresholds
         smoothing_window = self.freqai_info["entry_parameters"].get("smoothing_window", 30)
-        dataframe["meta_enter_long_threshold"] = dataframe[
-            "threshold_meta_long_max_returns_&-meta_target"].rolling(smoothing_window).mean()
-        dataframe["meta_enter_short_threshold"] = dataframe[
-            "threshold_meta_short_max_returns_&-meta_target"].rolling(smoothing_window).mean()
+
+        dataframe["win_long_enter_threshold"] = dataframe[
+            "win_long_threshold_&-meta_target_binary_long"].rolling(smoothing_window).mean()
+
+        dataframe["win_short_enter_threshold"] = dataframe[
+            "win_short_threshold_&-meta_target_binary_short"].rolling(smoothing_window).mean()
+
+        # Indicator to confirm ML model trained
+        dataframe["long_model_ready"] = (dataframe["win_long"].mean() != 0)
+        dataframe["short_model_ready"] = (dataframe["win_short"].mean() != 0)
 
         return dataframe
 
@@ -338,46 +474,130 @@ class LitmusSimpleStrategy(IStrategy):
 
         # Long Entry
         conditions = [df["primary_enter_long"],
-                      df["a_win_long"] >= df["meta_enter_long_threshold"]]
+                      df["long_model_ready"],
+                      df["win_long"] >= df["win_long_enter_threshold"]]
 
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_long", "enter_tag"]
-            ] = (1, "primary_enter_long")
+            ] = (1, "meta_enter_long")
 
         # Short Entry
         conditions = [df["primary_enter_short"],
-                      df["a_win_short"] >= df["meta_enter_short_threshold"]]
+                      df["short_model_ready"],
+                      df["win_short"] >= df["win_short_enter_threshold"]]
         if conditions:
             df.loc[
                 reduce(lambda x, y: x & y, conditions), ["enter_short", "enter_tag"]
-            ] = (1, "primary_enter_short")
+            ] = (1, "meta_enter_short")
 
         return df
 
     def populate_exit_trend(self, df: DataFrame, metadata: dict) -> pd.DataFrame:
+        # Use custom_exit() instead for more control
+        return df
+
+    def custom_exit(self, pair: str, trade: 'Trade', current_time: 'datetime', current_rate: float,
+                    current_profit: float, **kwargs):
+        dataframe, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+        last_candle = dataframe.iloc[-1].squeeze()
 
         exit_params = self.freqai_info["exit_parameters"]
-        if exit_params.get("exit_trigger_enabled", False):
-            # Long Exit
-            conditions = [df["primary_exit_long"]]
 
-            if conditions:
-                df.loc[
-                    reduce(lambda x, y: x & y, conditions), ["exit_long", "exit_tag"]
-                ] = (1, "primary_exit_long")
+        weak_profit_threshold = 0.005
 
-            # Short Exit
-            conditions = [df["primary_exit_short"]]
-            if conditions:
-                df.loc[
-                    reduce(lambda x, y: x & y, conditions), ["exit_short", "exit_tag"]
-                ] = (1, "primary_exit_short")
+        # When not in strong profit, exit when weak opposing entry detected
+        if exit_params["weak_opposing_entry_trigger_enabled"]:
+            if 0 < current_profit < weak_profit_threshold:
+                if ((last_candle["primary_enter_short"] == True) and
+                        (trade.trade_direction == "long")):
+                    return "exit_long_weak_opposing_signal"
 
-        return df
+                elif ((last_candle["primary_enter_long"] == True) and
+                      (trade.trade_direction == "short")):
+                    return "exit_short_weak_opposing_signal"
+
+        # When in strong profit, only exit when strong opposing entry detected
+        if exit_params["strong_opposing_entry_trigger_enabled"]:
+            if weak_profit_threshold < current_profit:
+                if ((last_candle["primary_enter_short"] == True) and
+                        (last_candle["short_model_ready"] == True) and
+                        (last_candle["win_short"] >= last_candle["win_short_enter_threshold"]) and
+                        (trade.trade_direction == "long")):
+                    return "exit_long_strong_opposing_signal"
+
+                elif ((last_candle["primary_enter_long"] == True) and
+                      (last_candle["long_model_ready"] == True) and
+                      (last_candle["win_long"] >= last_candle["win_long_enter_threshold"]) and
+                      (trade.trade_direction == "short")):
+                    return "exit_short_strong_opposing_signal"
+
+        # When in strong profit, only exit when strong opposing entry detected
+        if exit_params["exit_trigger_enabled"]:
+            if ((last_candle["primary_exit_long"] == True) and
+                    (trade.trade_direction == "long")):
+                return "exit_long_signal"
+
+            elif ((last_candle["primary_exit_short"] == True) and
+                  (trade.trade_direction == "short")):
+                return "exit_short_signal"
 
     def get_ticker_indicator(self):
         return int(self.config["timeframe"][:-1])
+
+    def custom_stake_amount(self, pair: str, current_time: datetime, current_rate: float,
+                            proposed_stake: float, min_stake: Optional[float], max_stake: float,
+                            leverage: float, entry_tag: Optional[str], side: str,
+                            **kwargs) -> float:
+
+        bet_sizing_params = self.freqai_info["bet_sizing"]
+        if bet_sizing_params["enabled"]:
+
+            dataframe, _ = self.dp.get_analyzed_dataframe(pair=pair, timeframe=self.timeframe)
+            current_candle = dataframe.iloc[-1].squeeze()
+
+            # Get available balance to bet
+            total_stake_amount = max_stake
+
+            # Calculate kelly criterion bet size
+            if side == "long":
+                pred_proba = current_candle["win_long"]
+                expected_win = current_candle["!-trade_return_long_expected_win"]
+                expected_loss = current_candle["!-trade_return_long_expected_loss"]
+                print(current_candle[["win_long", "!-trade_return_long_expected_win",
+                                      "!-trade_return_long_expected_loss"]])
+            else:
+                pred_proba = current_candle["win_short"]
+                expected_win = current_candle["!-trade_return_short_expected_win"]
+                expected_loss = current_candle["!-trade_return_short_expected_loss"]
+                print(current_candle[["win_short", "!-trade_return_short_expected_win",
+                                      "!-trade_return_short_expected_loss"]])
+
+            kelly_fraction = 0.2
+            kelly_factor = bet_sizing.kelly_bet_size(
+                p=pred_proba,
+                win=expected_win,
+                loss=expected_loss,
+                kelly_fraction=kelly_fraction
+            )
+
+            bet_amount = kelly_factor * total_stake_amount
+
+            self.dp.send_msg("*Kelly Criterion Bet Sizing:* \n"
+                             f"*Pair:* {pair} \n"
+                             f"*Side:* {side} \n"
+                             f"*Total available funds:* {np.round(total_stake_amount, 4)} \n"
+                             f"*Bet amount:* {np.round(bet_amount, 4)} \n"
+                             f"*Kelly factor:* {kelly_factor} \n"
+                             f"*Prediction proba:* {np.round(pred_proba, 4)} \n"
+                             f"*Expected win:* {np.round(expected_win, 4)} \n"
+                             f"*Expected loss:* {np.round(expected_loss, 4)} \n"
+                             f"*Kelly fraction:* {kelly_fraction}")
+
+            return bet_amount
+
+        else:
+            return proposed_stake
 
     def leverage(self, pair: str, current_time: datetime, current_rate: float,
                  proposed_leverage: float, max_leverage: float, entry_tag: Optional[str],
@@ -404,26 +624,17 @@ class LitmusSimpleStrategy(IStrategy):
     def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
                         current_rate: float, current_profit: float, **kwargs) -> float:
 
-        # Add tight SL when exit trigger observed
-        exit_params = self.freqai_info["exit_parameters"]
-        if exit_params.get("sl_exit_trigger_enabled", False):
-            dataframe, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
-            last_candle = dataframe.iloc[-1].squeeze()
-
-            if (
-                    (last_candle["primary_exit_long"] is True) or
-                    (last_candle["primary_exit_short"] is True)):
-                logger.info(f"Tightening stoploss as exit trigger detected for {pair}")
-                return exit_params.get("sl_exit_trigger_pct", False)
-
         if current_profit <= 0.00:
             return -1
 
-        if current_profit > 0.01:
-            desired_stoploss = current_profit / 2.0
+        elif current_profit > 0.005:
+            return 0.025
+
+        elif current_profit > 0.01:
+            desired_stoploss = current_profit
 
             min_sl = 0.01
-            max_sl = 0.03
+            max_sl = 0.02
 
             new_sl = max(min(desired_stoploss, max_sl), min_sl)
 
@@ -464,22 +675,25 @@ class LitmusSimpleStrategy(IStrategy):
         """
 
         # Only allow trade adjustment once every N minutes
-        if ((current_time - timedelta(minutes=5) > trade.date_last_filled_utc) &
-                (trade.nr_of_successful_entries <= self.max_entry_position_adjustment)):
+        if ((current_time - trade.date_last_filled_utc > timedelta(minutes=15)) &
+                (trade.nr_of_successful_entries <= self.max_entry_position_adjustment) &
+                (current_profit < -0.005)):
 
             df, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
             last_candle = df.iloc[-1].squeeze()
 
             # Long Entry
             enter_long = np.where(
-                (last_candle["primary_enter_long"] &
-                 (last_candle["a_win_long"] >= last_candle["meta_enter_long_threshold"])),
+                ((last_candle["primary_enter_long"] == True) and
+                 (last_candle["long_model_ready"] == True) and
+                 (last_candle["win_long"] >= last_candle["win_long_enter_threshold"])),
                 True, False)
 
             # Short Entry
             enter_short = np.where(
-                (last_candle["primary_enter_short"] &
-                 (last_candle["a_win_short"] >= last_candle["meta_enter_short_threshold"])),
+                ((last_candle["primary_enter_short"] == True) &
+                 (last_candle["short_model_ready"] == True) &
+                 (last_candle["win_short"] >= last_candle["win_short_enter_threshold"])),
                 True, False)
 
             if enter_long or enter_short:
@@ -487,6 +701,6 @@ class LitmusSimpleStrategy(IStrategy):
                 filled_entries = trade.select_filled_orders(trade.entry_side)
                 stake_amount = filled_entries[0].cost
                 logger.info(f"Trade adjustment made adding {stake_amount} to {trade.pair}")
-                return stake_amount
+                return stake_amount / 3.0
 
         return None

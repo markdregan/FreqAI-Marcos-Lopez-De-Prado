@@ -8,22 +8,25 @@ import sys
 import tscv
 
 from catboost import CatBoostClassifier
-from feature_engine.selection import DropCorrelatedFeatures, SelectByShuffling
-from fracdiff.sklearn import FracdiffStat
+from feature_engine.selection import DropCorrelatedFeatures
+# from fracdiff.sklearn import FracdiffStat
 from freqtrade.freqai.data_kitchen import FreqaiDataKitchen
 from freqtrade.freqai.freqai_interface import IFreqaiModel
 from freqtrade.litmus.db_helpers import save_df_to_db
-from freqtrade.litmus.feature_selection_helper import get_unimportant_features
+from freqtrade.litmus import feature_selection_helper as fs
 from freqtrade.litmus import hyperopt
 from freqtrade.litmus import model_diagnostics as md
 from freqtrade.litmus.model_helpers import MergedModel
 from functools import partial
 from optuna.trial import TrialState
 from pandas import DataFrame
-from pprint import pprint
-from sklearn.metrics import make_scorer, log_loss, f1_score
+from probatus.feature_elimination import EarlyStoppingShapRFECV
+from probatus.utils import Scorer
+# from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import make_scorer, f1_score, fbeta_score, roc_auc_score, log_loss
 from sklearn.model_selection import cross_validate
 from sklearn.preprocessing import MinMaxScaler
+from telegram.helpers import escape_markdown
 from time import time
 from typing import Any, Dict, Tuple
 
@@ -129,7 +132,7 @@ class LitmusMLDPClassifier(IFreqaiModel):
 
         # Apply fracdiff transform from prior fit
         # TODO: when bot restarted, "fds" does not exist. But this code below is called.
-        if self.freqai_info["feature_parameters"]["fracdiff"].get("enabled", False):
+        """if self.freqai_info["feature_parameters"]["fracdiff"].get("enabled", False):
 
             X_df = dk.data_dictionary["prediction_features"]
 
@@ -141,7 +144,7 @@ class LitmusMLDPClassifier(IFreqaiModel):
             X_df.loc[:, new_col_names] = fds.transform(X_df[cols_to_fd])
             X_df = X_df.drop(columns=cols_to_fd)
 
-            dk.data_dictionary["prediction_features"] = X_df
+            dk.data_dictionary["prediction_features"] = X_df"""
 
         predictions = self.model.predict(dk.data_dictionary["prediction_features"])
         pred_df = DataFrame(predictions, columns=dk.label_list)
@@ -174,20 +177,33 @@ class LitmusMLDPClassifier(IFreqaiModel):
             # Swap train and test data
             X_train = data_dictionary["test_features"]
             y_train = data_dictionary["test_labels"][t]
-            time_weight_train = data_dictionary["test_weights"]  # noqa: F841
-            returns_train = data_dictionary["test_non_normalized"].loc[:, ["!-trade_return"]]
-            scaler = MinMaxScaler(feature_range=(1, 10))
+
+            time_scaler = MinMaxScaler(feature_range=(1, 10))
+            time_weight_train = pd.DataFrame(
+                time_scaler.fit_transform(
+                    np.absolute(data_dictionary["test_weights"].reshape(-1, 1))),
+                columns=["time_weight_train"], index=data_dictionary["test_labels"].index,
+                dtype="float")
+
+            utility_train = data_dictionary["test_non_normalized"]
+            weight_scaler = MinMaxScaler(feature_range=(1, 10))
             weight_train = pd.DataFrame(
-                scaler.fit_transform(np.absolute(returns_train)),
-                columns=["weight_train"], index=returns_train.index, dtype="float")
+                weight_scaler.fit_transform(
+                    np.absolute(utility_train.loc[:, ["!-trade_return"]])),
+                columns=["weight_train"], index=utility_train.index, dtype="float").fillna(value=1)
+
+            print(weight_train)
+            print(time_weight_train)
+            print(weight_train["weight_train"] + time_weight_train["time_weight_train"])
+            # weight_train = weight_train + time_weight_train
 
             X_test = data_dictionary["train_features"]
             y_test = data_dictionary["train_labels"][t]
             time_weight_test = data_dictionary["train_weights"]  # noqa: F841
-            returns_test = data_dictionary["train_non_normalized"].loc[:, ["!-trade_return"]]
+            utility_test = data_dictionary["train_non_normalized"]
             weight_test = pd.DataFrame(
-                scaler.transform(np.absolute(returns_test)),
-                columns=["weight_test"], index=returns_test.index, dtype="float")
+                weight_scaler.transform(np.absolute(utility_test.loc[:, ["!-trade_return"]])),
+                columns=["weight_test"], index=utility_test.index, dtype="float")
 
             # Summary of target class counts
             logger.info(f"Class counts for {t}")
@@ -212,7 +228,7 @@ class LitmusMLDPClassifier(IFreqaiModel):
 
             # Apply fractional differentiation to features
             if self.freqai_info["feature_parameters"]["fracdiff"].get("enabled", False):
-                fd_params = self.freqai_info["feature_parameters"]["fracdiff"]
+                fd_params = self.freqai_info["feature_parameters"]["fracdiff"]  # noqa: F841
 
                 numeric_cols = X_train.select_dtypes("number").columns
                 cols_to_fd = [c for c in numeric_cols if "%" in c and "_fd" not in c]
@@ -228,6 +244,8 @@ class LitmusMLDPClassifier(IFreqaiModel):
                 else:
                     logger.info(f"Starting fracdiff procedure for {len(cols_to_fd)} columns")
 
+                    """
+                    # Note: Have not seen good impact from fracdiff. commenting out for now.
                     fds = FracdiffStat(
                         window=fd_params["window"], mode=fd_params["mode"],
                         precision=fd_params["precision"], upper=fd_params["upper"])
@@ -241,27 +259,26 @@ class LitmusMLDPClassifier(IFreqaiModel):
                     self.custom_fds_info["fds"] = fds
 
                     logger.info("Finished fracdiff procedure")
-                    pprint(dict(zip(cols_to_fd, fds.d_)))
+                    pprint(dict(zip(cols_to_fd, fds.d_)))"""
 
                 # Drop non fracdiff features
                 X_train = X_train.drop(columns=cols_to_fd)
 
-            # Drop low performing features based on prior iterations
-            if self.freqai_info["feature_selection"]["drop_weak_features"].get("enabled", False):
+            # Shap RFECV: Drop weak features
+            if self.freqai_info["feature_selection"]["shap_rfecv"].get("enabled", False):
+                shap_rfecv_params = self.freqai_info["feature_selection"]["shap_rfecv"]
 
-                weak_params = self.freqai_info["feature_selection"]["drop_weak_features"]
+                self.shap_rfecv_rerun, features_to_exclude = fs.get_shap_rfecv_feature_to_exclude(
+                    id=self.freqai_info["identifier"],
+                    model=t,
+                    pair=dk.pair,
+                    is_win_threshold=shap_rfecv_params["is_win_threshold"],
+                    rerun_period_hours=shap_rfecv_params["rerun_period_hours"]
+                )
 
-                unimp_features = get_unimportant_features(
-                    model=t, pair=dk.pair,
-                    pct_additional_features=weak_params["pct_additional_features"])
-
-                num_feat_before = len(X_train.columns)
-                X_train = X_train.drop(columns=unimp_features, errors="ignore")
-                X_test = X_test.drop(columns=unimp_features, errors="ignore")
-                num_feat_after = len(X_train.columns)
-
-                logger.info(f"Dropping {num_feat_before - num_feat_after} weak features. "
-                            f"{num_feat_after} remaining.")
+                logger.info(f"Size of X_train before removal: {len(X_train.columns)}")
+                X_train = X_train.drop(columns=features_to_exclude, errors="ignore")
+                logger.info(f"Size of X_train after removal: {len(X_train.columns)}")
 
             # Drop features using Greedy Correlated Selection
             if self.freqai_info["feature_selection"]["greedy_selection"].get("enabled", False):
@@ -295,53 +312,93 @@ class LitmusMLDPClassifier(IFreqaiModel):
                 X_train = X_train.loc[train_row_keep_idx, :]
                 y_train = y_train.loc[train_row_keep_idx]
                 weight_train = weight_train.loc[train_row_keep_idx, :]
-                returns_train = returns_train.loc[train_row_keep_idx]
+                utility_train = utility_train.loc[train_row_keep_idx, :]
+
                 X_test = X_test.loc[test_row_keep_idx, :]
                 y_test = y_test.loc[test_row_keep_idx]
                 weight_test = weight_test.loc[test_row_keep_idx, :]
-                returns_test = returns_test.loc[test_row_keep_idx]
+                utility_test = utility_test.loc[test_row_keep_idx, :]
 
                 logger.info(f"Meta-model prep: Dropped train rows and {len(y_train)} remaining.")
                 logger.info(f"Meta-model prep: Dropped test rows and {len(y_test)} remaining.")
 
-            # Feature importance selection using SelectByShuffle
-            if self.freqai_info["feature_selection"]["select_by_shuffle"].get("enabled", False):
-                logger.info(f"Starting SelectByShuffle for {len(X_train.columns)} features")
-                shuffle_params = self.freqai_info["feature_selection"]["select_by_shuffle"]
+            # Shap RFECV
+            self.shap_rfecv_enabled = self.freqai_info["feature_selection"]["shap_rfecv"].get(
+                "enabled", False)
+            if self.shap_rfecv_enabled and self.shap_rfecv_rerun:
+                logger.info(f"Starting Shap RFECV for {len(X_train.columns)} features")
+                shap_rfecv_params = self.freqai_info["feature_selection"]["shap_rfecv"]
 
                 clf = CatBoostClassifier(**ho_best_params)
+                # suppress_verbosity_params = {"verbose": False}
+                # clf.set_params(**suppress_verbosity_params)
 
                 cv_params = self.freqai_info["feature_selection"]["cv"]
                 cv = tscv.GapKFold(
                     n_splits=cv_params["cv_n_splits"],
                     gap_before=cv_params["cv_gap_before"],
-                    gap_after=cv_params["cv_gap_after"])
+                    gap_after=cv_params["cv_gap_after"]
+                )
 
-                selector = SelectByShuffling(
-                    estimator=clf,
-                    scoring=shuffle_params["scoring"],
+                pos_label = [v for v in y_train.unique() if "win" in v][0]
+                # TODO: Add sample_weight (Probatus not yet supporting)
+                sample_weight = weight_train.to_numpy().ravel()
+
+                """scorer = Scorer("f1", custom_scorer=make_scorer(
+                    fbeta_score, beta=shap_rfecv_params["fbeta_coeff"],
+                    pos_label=pos_label, average="binary"))"""
+
+                # Use max_cum_prod_returns as it inherently captures sample_weights
+                # Config: Model Diagnostic Scores
+                trade_cost_pct = self.freqai_info["entry_parameters"].get("trade_cost_pct", 0)
+                slippage_cost_pct = self.freqai_info["entry_parameters"].get("slippage_cost_pct", 0)
+                returns_df = pd.DataFrame(index=utility_train.index)
+                returns_df["returns_long"] = (
+                        utility_train.loc[:, ["!-trade_return_long"]]
+                        + 1.0 - trade_cost_pct - slippage_cost_pct
+                )
+                returns_df["returns_short"] = (
+                        -1 * utility_train.loc[:, ["!-trade_return_short"]]
+                        + 1.0 - trade_cost_pct - slippage_cost_pct
+                )
+
+                scorer = Scorer("max_cum_prod_returns", custom_scorer=partial(
+                    md.get_value_max_cumprod_returns, returns_df=returns_df, target=pos_label))
+
+                shap_refcv = EarlyStoppingShapRFECV(
+                    clf=clf,
+                    step=shap_rfecv_params["step"],
+                    min_features_to_select=shap_rfecv_params["min_features_to_select"],
                     cv=cv,
-                    threshold=shuffle_params["min_threshold"])
+                    scoring=scorer,
+                    n_jobs=cv_params["cv_n_splits"],
+                    verbose=shap_rfecv_params["verbose"],
+                    early_stopping_rounds=shap_rfecv_params["early_stopping_rounds"]
+                )
 
-                all_feature_names = X_train.columns
-                # TODO: Add weight_train to fit_params
-                # X_train = selector.fit_transform(X_train, y_train, sample_weight=weight_train)
-                X_train = selector.fit_transform(X_train, y_train)
+                shap_kwargs = {"feature_perturbation": "tree_path_dependent"}
+
+                shap_report = shap_refcv.fit_compute(
+                    X_train, y_train, sample_weight=sample_weight, **shap_kwargs)
+
+                best_feature_names = fs.get_probatus_best_feature_names(
+                    shap_refcv, shap_report, best_method="conservative_max_mean")
+
+                X_train = X_train.loc[:, best_feature_names]
 
                 # Store feature ranks to database
-                feat_df = pd.DataFrame(
-                    np.column_stack([all_feature_names, selector.get_support()]),
-                    columns=["feature_id", "important_feature"])
+                feat_df = fs.get_probatus_feature_rank(
+                    shap_report, best_method="conservative_max_mean")
                 feat_df["train_time"] = time()
                 feat_df["pair"] = dk.pair
                 feat_df["model"] = t
-                feat_df = feat_df.set_index(keys=["model", "train_time", "pair", "feature_id"])
-                save_df_to_db(df=feat_df, table_name="feature_shuffle_selection")
+                feat_df["id"] = self.freqai_info["identifier"]
+                feat_df = feat_df.set_index(
+                    keys=["id", "model", "train_time", "pair", "feature_id"])
+                save_df_to_db(df=feat_df, table_name="shap_rfecv_feature_selection")
 
                 num_features_selected = len(X_train.columns)
-                dk.data["extra_returns_per_train"][
-                    f"num_features_selected_{t}"] = num_features_selected
-                logger.info(f"SelectByShuffle complete selecting {num_features_selected} features")
+                logger.info(f"Shap RFECV complete selecting {num_features_selected} features")
 
             # Optuna hyper param optimization
             pct_triggered = self.freqai_info["optuna"]["pct_triggered"]
@@ -361,7 +418,10 @@ class LitmusMLDPClassifier(IFreqaiModel):
                 clf = CatBoostClassifier(**base_params)
 
                 param_distributions = {
-                    "iterations": optuna.distributions.IntDistribution(800, 1200, log=True),
+                    "loss_function": optuna.distributions.CategoricalDistribution(
+                        choices=("MultiClassOneVsAll", "Logloss")
+                    ),
+                    "iterations": optuna.distributions.IntDistribution(800, 1500, log=True),
                     "learning_rate": optuna.distributions.FloatDistribution(1e-3, 0.01, log=True),
                     "depth": optuna.distributions.IntDistribution(2, 8),
                     "l2_leaf_reg": optuna.distributions.FloatDistribution(
@@ -386,8 +446,8 @@ class LitmusMLDPClassifier(IFreqaiModel):
                 model = optuna.integration.OptunaSearchCV(
                     clf, param_distributions, cv=cv, enable_pruning=False,
                     study=study, n_trials=10, verbose=1, refit=False,
-                    scoring=make_scorer(log_loss, greater_is_better=False, needs_proba=True))
-                model.fit(X_train, y_train)
+                    scoring=make_scorer(f1_score, greater_is_better=False, needs_proba=False))
+                model.fit(X_train, y_train, sample_weight=weight_train.to_numpy().ravel())
                 ho_best_params = model.best_params_
                 # TODO: Add attrs - model.set_user_attr("dataset", "blobs")
 
@@ -425,8 +485,6 @@ class LitmusMLDPClassifier(IFreqaiModel):
                     logger.info("Successfully reduced optuna trials and saved to db")
 
             # Compute CV Model Performance Metrics
-            base_params = self.freqai_info["model_training_parameters"]
-            ho_best_params.update(base_params)
             model = CatBoostClassifier(**ho_best_params)
 
             cv_params = self.freqai_info["feature_selection"]["cv"]
@@ -435,85 +493,183 @@ class LitmusMLDPClassifier(IFreqaiModel):
                 gap_before=cv_params["cv_gap_before"],
                 gap_after=cv_params["cv_gap_after"])
 
-            # Config: Model Diagnostic Scores
+            # Model diagnostics
             trade_cost_pct = self.freqai_info["entry_parameters"].get("trade_cost_pct", 0)
             slippage_cost_pct = self.freqai_info["entry_parameters"].get("slippage_cost_pct", 0)
-            returns_df = pd.DataFrame(index=returns_train.index)
-            returns_df["returns_long"] = returns_train + 1.0 - trade_cost_pct - slippage_cost_pct
-            returns_df["returns_short"] = -returns_train + 1.0 - trade_cost_pct - slippage_cost_pct
+            returns_df = pd.DataFrame(index=utility_train.index)
+            returns_df["returns_long"] = (
+                    utility_train.loc[:, ["!-trade_return_long"]]
+                    + 1.0 - trade_cost_pct - slippage_cost_pct
+            )
+            returns_df["returns_short"] = (
+                    -1 * utility_train.loc[:, ["!-trade_return_short"]]
+                    + 1.0 - trade_cost_pct - slippage_cost_pct
+            )
 
-            # Trick: Make sure only long entries count towards long metrics below (otherwise 1.0)
-            returns_df["returns_long"] = np.where(
-                X_train["%-trend_long"], returns_df["returns_long"], 1)
-            returns_df["returns_short"] = np.where(
-                X_train["%-trend_short"], returns_df["returns_short"], 1)
+            pos_label = [v for v in y_train.unique() if "win" in v][0]
+            shap_rfecv_params = self.freqai_info["feature_selection"]["shap_rfecv"]
 
             perf_mc_metrics = {
-                "EmptyDescribeReturns": partial(
-                    md.get_mc_describe_returns, returns_df=returns_df, title=f"{t}"),
-                "EmptyDescribeCumProdReturns": partial(
-                    md.get_mc_describe_cumprod_returns, returns_df=returns_df, title=f"{t}"),
-                "EmptyDescribePrecisionRecall": partial(
-                    md.get_mc_describe_precision_recall, title=f"{t}"),
-                "ThresholdMCMetaLongMaxCumProdReturns": partial(
-                    md.get_mc_threshold_max_cumprod_returns,
-                    returns_df=returns_df, target="a_win_long"),
-                "ThresholdMCMetaShortMaxCumProdReturns": partial(
-                    md.get_mc_threshold_max_cumprod_returns,
-                    returns_df=returns_df, target="a_win_short"),
-                "ValueMCMetaLongMaxCumProdReturns": partial(
-                    md.get_mc_value_max_cumprod_returns,
-                    returns_df=returns_df, target="a_win_long"),
-                "ValueMCMetaShortMaxCumProdReturns": partial(
-                    md.get_mc_value_max_cumprod_returns,
-                    returns_df=returns_df, target="a_win_short"),
-                "ValueMCMetaF1ScoreMacro": make_scorer(f1_score, average='macro')
+                "win_long_returns_description": partial(
+                    md.log_returns_description,
+                    returns_df=returns_df, target="win_long"),
+                "win_long_threshold": partial(
+                    md.get_threshold_max_cumprod_returns,
+                    returns_df=returns_df, target="win_long"),
+                "win_long_threshold_mc": partial(
+                    md.get_threshold_max_cumprod_returns_monte_carlo,
+                    returns_df=returns_df, target="win_long", num_mc_iterations=500, mc_frac=0.2),
+                "win_long_value": partial(
+                    md.get_value_max_cumprod_returns,
+                    returns_df=returns_df, target="win_long"),
+                "win_long_value_mc": partial(
+                    md.get_value_max_cumprod_returns_monte_carlo,
+                    returns_df=returns_df, target="win_long", num_mc_iterations=500, mc_frac=0.2),
+                "win_long_pct_y_true": partial(
+                    md.get_value_pct_y_true,
+                    target="win_long"),
+
+                "win_short_returns_description": partial(
+                    md.log_returns_description,
+                    returns_df=returns_df, target="win_short"),
+                "win_short_threshold": partial(
+                    md.get_threshold_max_cumprod_returns,
+                    returns_df=returns_df, target="win_short"),
+                "win_short_threshold_mc": partial(
+                    md.get_threshold_max_cumprod_returns_monte_carlo,
+                    returns_df=returns_df, target="win_short", num_mc_iterations=500, mc_frac=0.2),
+                "win_short_value": partial(
+                    md.get_value_max_cumprod_returns,
+                    returns_df=returns_df, target="win_short"),
+                "win_short_value_mc": partial(
+                    md.get_value_max_cumprod_returns_monte_carlo,
+                    returns_df=returns_df, target="win_short", num_mc_iterations=500, mc_frac=0.2),
+                "win_short_pct_y_true": partial(
+                    md.get_value_pct_y_true,
+                    target="win_short"),
+
+                "value_meta_f1_score": make_scorer(
+                    f1_score, pos_label=pos_label, average="binary"),
+                "value_f1_beta_score": make_scorer(
+                    fbeta_score, beta=shap_rfecv_params["fbeta_coeff"],
+                    pos_label=pos_label, average="binary"),
+                "value_f1_macro_score": make_scorer(
+                    f1_score, average="macro"),
+                "value_auc_roc_score": make_scorer(
+                    roc_auc_score, needs_proba=True),
+                "value_neg_log_loss_score": make_scorer(
+                    log_loss, needs_proba=True),
             }
 
-            # fit_params = {"sample_weight": weight_train}
-
+            fit_params = {"sample_weight": weight_train.to_numpy().ravel()}
             perf_scores = cross_validate(
                 estimator=model, X=X_train, y=y_train, scoring=perf_mc_metrics,
-                cv=cv)
+                cv=cv, n_jobs=cv_params["cv_n_splits"], fit_params=fit_params)
 
-            if -999 not in perf_scores["test_ThresholdMCMetaLongMaxCumProdReturns"]:
-                dk.data["extra_returns_per_train"][f"threshold_meta_long_max_returns_{t}"] = \
-                    perf_scores["test_ThresholdMCMetaLongMaxCumProdReturns"].mean()
+            # Telegram diagnostics
+            telegram_dict = {}
+            telegram_dict["pair"] = escape_markdown(dk.pair, version=2)
+            telegram_dict["model"] = escape_markdown(t, version=2)
 
-            if -999 not in perf_scores["test_ThresholdMCMetaShortMaxCumProdReturns"]:
-                dk.data["extra_returns_per_train"][f"threshold_meta_short_max_returns_{t}"] = \
-                    perf_scores["test_ThresholdMCMetaShortMaxCumProdReturns"].mean()
+            # Long
+            if -999 not in perf_scores["test_win_long_threshold"]:
+                dk.data["extra_returns_per_train"][f"win_long_threshold_{t}"] = \
+                    perf_scores["test_win_long_threshold"].mean()
+                win_long_threshold = list(np.round(perf_scores["test_win_long_threshold"], 4))
+                telegram_dict["win_long_threshold"] = ', '.join(str(x) for x in win_long_threshold)
 
-            if -999 not in perf_scores["test_ValueMCMetaLongMaxCumProdReturns"]:
-                dk.data["extra_returns_per_train"][f"value_meta_long_max_returns_{t}"] = \
-                    perf_scores["test_ValueMCMetaLongMaxCumProdReturns"].mean()
+            if -999 not in perf_scores["test_win_long_value"]:
+                dk.data["extra_returns_per_train"][f"win_long_value_{t}"] = \
+                    perf_scores["test_win_long_value"].mean()
+                win_long_value = list(np.round(perf_scores["test_win_long_value"], 4))
+                telegram_dict["win_long_value"] = ', '.join(str(x) for x in win_long_value)
 
-            if -999 not in perf_scores["test_ValueMCMetaShortMaxCumProdReturns"]:
-                dk.data["extra_returns_per_train"][f"value_meta_short_max_returns_{t}"] = \
-                    perf_scores["test_ValueMCMetaShortMaxCumProdReturns"].mean()
+            if -999 not in perf_scores["test_win_long_value_mc"]:
+                win_long_value_mc = list(np.round(perf_scores["test_win_long_value_mc"], 4))
+                telegram_dict["win_long_value_mc"] = ', '.join(
+                    str(x) for x in win_long_value_mc)
 
+            if -999 not in perf_scores["test_win_long_pct_y_true"]:
+                win_long_pct_y_true = list(np.round(perf_scores["test_win_long_pct_y_true"], 4))
+                telegram_dict["win_long_pct_y_true"] = ', '.join(
+                    str(x) for x in win_long_pct_y_true)
+
+            # Short
+            if -999 not in perf_scores["test_win_short_threshold"]:
+                dk.data["extra_returns_per_train"][f"win_short_threshold_{t}"] = \
+                    perf_scores["test_win_short_threshold"].mean()
+                win_short_threshold = list(np.round(perf_scores["test_win_short_threshold"], 4))
+                telegram_dict["win_short_threshold"] = ', '.join(
+                    str(x) for x in win_short_threshold)
+
+            if -999 not in perf_scores["test_win_short_value"]:
+                dk.data["extra_returns_per_train"][f"win_short_value_{t}"] = \
+                    perf_scores["test_win_short_value"].mean()
+                win_short_value = list(np.round(perf_scores["test_win_short_value"], 4))
+                telegram_dict["win_short_value"] = ', '.join(
+                    str(x) for x in win_short_value)
+
+            if -999 not in perf_scores["test_win_short_value_mc"]:
+                win_short_value_mc = list(np.round(perf_scores["test_win_short_value_mc"], 4))
+                telegram_dict["win_short_value_mc"] = ', '.join(
+                    str(x) for x in win_short_value_mc)
+
+            if -999 not in perf_scores["test_win_short_pct_y_true"]:
+                win_short_pct_y_true = list(np.round(perf_scores["test_win_short_pct_y_true"], 4))
+                telegram_dict["win_short_pct_y_true"] = ', '.join(
+                    str(x) for x in win_short_pct_y_true)
+
+            # F1 Score
             dk.data["extra_returns_per_train"][f"value_meta_f1_score_{t}"] = \
-                perf_scores["test_ValueMCMetaF1ScoreMacro"].mean()
+                perf_scores["test_value_meta_f1_score"].mean()
+            meta_f1_score = list(np.round(perf_scores["test_value_meta_f1_score"], 4))
+            telegram_dict["f1_score"] = ', '.join(
+                str(x) for x in meta_f1_score)
 
-            """dk.data["extra_returns_per_train"][f"threshold_max_returns_{t}"] = perf_scores[
-                "test_ThresholdMaxCumProdReturns"].mean()
-            dk.data["extra_returns_per_train"][f"value_max_returns_{t}"] = perf_scores[
-                "test_ValueMaxCumProdReturns"].mean()
-            dk.data["extra_returns_per_train"][f"std_max_returns_{t}"] = perf_scores[
-                "test_ValueMaxCumProdReturns"].std()
-            dk.data["extra_returns_per_train"][f"precision_max_returns_{t}"] = perf_scores[
-                "test_PrecisionMaxCumProdReturns"].mean()
-            dk.data["extra_returns_per_train"][f"recall_max_returns_{t}"] = perf_scores[
-                "test_RecallMaxCumProdReturns"].mean()"""
+            # F1 Beta Score
+            dk.data["extra_returns_per_train"][f"value_f1_beta_score_{t}"] = \
+                perf_scores["test_value_f1_beta_score"].mean()
+            f1_beta_score = list(np.round(perf_scores["test_value_f1_beta_score"], 4))
+            telegram_dict["f1_beta_score"] = ', '.join(
+                str(x) for x in f1_beta_score)
 
+            # F1 Macro Score
+            meta_f1_macro_score = list(np.round(perf_scores["test_value_f1_macro_score"], 4))
+            telegram_dict["f1_macro_score"] = ', '.join(
+                str(x) for x in meta_f1_macro_score)
+
+            # AUC ROC Score
+            auc_roc_score = list(np.round(perf_scores["test_value_auc_roc_score"], 4))
+            telegram_dict["auc_roc_score"] = ', '.join(
+                str(x) for x in auc_roc_score)
+
+            # Neg Log Loss Score
+            neg_log_loss_score = list(np.round(perf_scores["test_value_neg_log_loss_score"], 4))
+            telegram_dict["neg_log_loss_score"] = ', '.join(
+                str(x) for x in neg_log_loss_score)
+
+            # Number Features
+            num_features_selected = len(X_train.columns)
+            dk.data["extra_returns_per_train"][
+                f"num_features_selected_{t}"] = num_features_selected
+            telegram_dict["num_features_selected"] = num_features_selected
+
+            # Train time
+            telegram_dict["fit_time"] = perf_scores["fit_time"].mean()
+
+            # Print logs
             logger.info(f"CV model performance scores: {perf_scores}")
 
+            # Log to telegram
+            telegram_msg = []
+            for k, v in telegram_dict.items():
+                telegram_msg.append(f"*{k}:* {v}")
+            self.data_provider.send_msg('\n'.join(telegram_msg))
+            print(telegram_msg)
+
             # Train final model
-            base_params = self.freqai_info["model_training_parameters"]
-            # ho_best_params.update(base_params)
             model = CatBoostClassifier(**ho_best_params)
-            # model.fit(X_train, y_train, sample_weight=weight_train)
-            model.fit(X_train, y_train)
+            model.fit(X_train, y_train, sample_weight=weight_train.to_numpy().ravel())
 
             # Prepare model details for MergedModel class
             model_list.append(model)
@@ -521,14 +677,35 @@ class LitmusMLDPClassifier(IFreqaiModel):
             model_features_list.append(X_train.columns.to_list())
             logger.info(f"Model {t} appended to MergedModel")
 
+            """
+            # Note: calibrated and non_calibrated predictions are not too different.
+            # Not integrating into litmus yet
+            # Calibrate classifier so predict_proba is aligned with frequentist definition
+            cv_params = self.freqai_info["feature_selection"]["cv"]
+            base_model = CatBoostClassifier(**ho_best_params)
+            calibrated_model = CalibratedClassifierCV(
+                base_estimator=base_model,
+                method="isotonic",
+                cv=cv_params["cv_n_splits"],
+                n_jobs=cv_params["cv_n_splits"],
+                ensemble=True
+            )
+            logger.info("Fitting calibrated model")
+            calibrated_model.fit(X_train, y_train, sample_weight=weight_train.to_numpy().ravel())
+
+            calibrated_proba = calibrated_model.predict_proba(X_test)
+            non_calibrated_proba = model.predict_proba(X_test)
+
+            print(np.hstack([non_calibrated_proba, calibrated_proba]))"""
+
             end_time = time()
             total_time = end_time - start_time
             dk.data["extra_returns_per_train"][f"total_time_{t}"] = total_time
 
-        self.model = MergedModel(
+        merged_model = MergedModel(
             model_list=model_list,
             model_type_list=model_type_list,
             model_features_list=model_features_list
         )
 
-        return self.model
+        return merged_model

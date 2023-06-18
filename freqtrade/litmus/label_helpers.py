@@ -6,8 +6,12 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
-def tripple_barrier(df_col, upper_pct, lower_pct):
+def tripple_barrier(df_col, upper_pct, lower_pct, result):
     """Return label associated with first time crossing of vertical, upper or lower barrier
+
+    upper_pct: % above close first cancle
+    lower_pct: % below close first candle
+    result: one of ["side", "value"]
 
     Example useage:
         window = 5
@@ -32,13 +36,19 @@ def tripple_barrier(df_col, upper_pct, lower_pct):
 
     # Based on first crossing, assign appropriate label
     if upper_idx < lower_idx:
-        barrier = 1
+        side = 1
+        value = df_col.iloc[upper_idx]
     elif lower_idx < upper_idx:
-        barrier = -1
+        side = -1
+        value = df_col.iloc[lower_idx]
     else:
-        barrier = 0
+        side = 0
+        value = df_col.iloc[-1]
 
-    return barrier
+    if result == "side":
+        return side
+    elif result == "value":
+        return value
 
 
 def max_extreme_value(df_col):

@@ -1,283 +1,152 @@
 import numpy as np
 import pandas as pd
-from sklearn.metrics import precision_recall_curve, classification_report
 
 
-# Multiclass Methods
+def get_predictions_with_returns(estimator, X, returns_df, target):
+    X_copy = X.copy()
+    class_idx = estimator.classes_.tolist().index(target)
 
-classes_to_ignore = ["loss", "not_minmax"]
+    # Add target prediction probabilities to df
+    X_copy["pred_proba"] = np.float64(estimator.predict_proba(X_copy)[:, class_idx])
 
-def get_mc_describe_returns(estimator, X, y, returns_df, title):
-    classes_to_describe = [c for c in estimator.classes_ if c not in classes_to_ignore]
-    for idx, c in enumerate(classes_to_describe):
-        X_copy = X.copy()
-        X_copy["pred_proba"] = estimator.predict_proba(X_copy)[:, idx]
+    # Add returns to df
+    if "short" in target:
+        return_col = "returns_short"
+    elif "long" in target:
+        return_col = "returns_long"
+    else:
+        return -999
 
-        if "short" in c:
-            return_col = "returns_short"
-        else:
-            return_col = "returns_long"
+    X_copy["returns"] = returns_df.loc[:, return_col]
+    X_copy = X_copy.sort_values(by="pred_proba", ascending=False)
+    X_copy["cumprod_returns"] = X_copy["returns"].cumprod()
 
-        returns = returns_df.loc[X_copy.index, return_col]
+    return X_copy
+
+
+def log_returns_description(estimator, X, y, returns_df, target):
+    if target in estimator.classes_:
+
+        # Get df with proba and returns
+        df = get_predictions_with_returns(estimator, X, returns_df, target)
+
+        # Print trade and cumprod returns descriptions
         bins = np.linspace(start=0, stop=1, num=11)
-        stats = returns.groupby(pd.cut(X_copy["pred_proba"], bins=bins)).agg("describe")
-        print(f"Trade Returns by Threshold: {title} ({c})")
+        stats = df[["cumprod_returns", "returns"]].groupby(
+            pd.cut(df["pred_proba"], bins=bins)).agg(["mean", "min", "max", "count"])
+        print(f"Target: {target}")
         print(stats)
 
-    return 0
-
-
-def get_mc_describe_cumprod_returns(estimator, X, y, returns_df, title):
-    classes_to_describe = [c for c in estimator.classes_ if c not in classes_to_ignore]
-    for idx, c in enumerate(classes_to_describe):
-        X_copy = X.copy()
-        X_copy["pred_proba"] = estimator.predict_proba(X_copy)[:, idx]
-        X_copy = X_copy.sort_values(by="pred_proba", ascending=False)
-
-        if "short" in c:
-            return_col = "returns_short"
-        else:
-            return_col = "returns_long"
-
-        returns = returns_df.loc[X_copy.index, return_col]
-        X_copy["cumprod_returns"] = returns.cumprod()
-
-        bins = np.linspace(start=0, stop=1, num=11)
-        stats = X_copy["cumprod_returns"].groupby(
-            pd.cut(X_copy["pred_proba"], bins=bins)).agg("describe")
-        print(f"Cumulative Product Returns by Threshold: {title} ({c})")
-        print(stats)
-
-    return 0
-
-
-def get_mc_threshold_max_cumprod_returns(estimator, X, y, returns_df, target):
-    classes_to_describe = [c for c in estimator.classes_]
-    for idx, c in enumerate(classes_to_describe):
-
-        if target == c:
-            X_copy = X.copy()
-            X_copy["pred_proba"] = estimator.predict_proba(X_copy)[:, idx]
-            X_copy = X_copy.sort_values(by="pred_proba", ascending=False)
-
-            if "short" in c:
-                return_col = "returns_short"
-            else:
-                return_col = "returns_long"
-
-            returns = returns_df.loc[X_copy.index, return_col]
-            X_copy["cumprod_returns"] = returns.cumprod()
-
-            max_cumprod_returns_idx = X_copy["cumprod_returns"].argmax()
-            max_cumprod_returns_threshold = X_copy.iloc[max_cumprod_returns_idx]["pred_proba"]
-
-            return max_cumprod_returns_threshold
-        else:
-            # Loop through remaining classes
-            continue
-
-    return -999
-
-
-def get_mc_value_max_cumprod_returns(estimator, X, y, returns_df, target):
-    classes_to_describe = [c for c in estimator.classes_]
-    for idx, c in enumerate(classes_to_describe):
-
-        if target == c:
-            X_copy = X.copy()
-            X_copy["pred_proba"] = estimator.predict_proba(X_copy)[:, idx]
-            X_copy = X_copy.sort_values(by="pred_proba", ascending=False)
-
-            if "short" in c:
-                return_col = "returns_short"
-            else:
-                return_col = "returns_long"
-
-            returns = returns_df.loc[X_copy.index, return_col]
-            X_copy["cumprod_returns"] = returns.cumprod()
-
-            max_cumprod_returns_idx = X_copy["cumprod_returns"].argmax()
-            max_cumprod_returns_value = X_copy.iloc[max_cumprod_returns_idx]["cumprod_returns"]
-
-            return max_cumprod_returns_value
-        else:
-            # Loop through remaining classes
-            continue
-
-    return -999
-
-
-"""TODO
-- Get threshold for max cum prod returns - allowing class to be specified
-- Add trade cost to long and short situations appropriately
-- Change trade returns to TBM"""
-
-
-def get_mc_describe_precision_recall(estimator, X, y, title):
-    classes_to_describe = [c for c in estimator.classes_ if c not in classes_to_ignore]
-    for idx, c in enumerate(classes_to_describe):
-        precision, recall, thresholds = precision_recall_curve(
-            y, estimator.predict_proba(X)[:, idx], pos_label=c)
-
-        pr_summary = np.column_stack([precision, recall, np.append(thresholds, [1])])
-        pr_summary_df = pd.DataFrame(pr_summary, columns=["precision", "recall", "thresholds"])
-        bins = np.linspace(start=0, stop=1, num=11)
-
-        pr_agg_df = pr_summary_df[["precision", "recall"]].groupby(
-            pd.cut(pr_summary_df["thresholds"], bins=bins)).mean()
-        print(f"Precision Recall by Threshold: {title} ({c})")
-        print(pr_agg_df)
-
-    return 0
-
-
-def get_mc_describe_classification_report(estimator, X, y, title):
-    X_copy = X.copy()
-    X_copy["pred"] = estimator.predict(X_copy)
-
-    stats = classification_report(y_true=y, y_pred=X_copy["pred"])
-
-    print(f"Classification Report: {title}")
-    print(stats)
-
-    return 0
-
-
-# Binary Classification Methods
-def get_precision_at_threshold(estimator, X, y, desired_threshold):
-    pos_label = np.sort(y.unique())[0]
-    precision, recall, thresholds = precision_recall_curve(
-        y, estimator.predict_proba(X)[:, 0], pos_label=pos_label)
-
-    desired_threshold_idx = np.argmax(thresholds >= desired_threshold)
-
-    return precision[desired_threshold_idx]
-
-
-def get_recall_at_threshold(estimator, X, y, desired_threshold):
-    pos_label = np.sort(y.unique())[0]
-    precision, recall, thresholds = precision_recall_curve(
-        y, estimator.predict_proba(X)[:, 0], pos_label=pos_label)
-
-    desired_threshold_idx = np.argmax(thresholds >= desired_threshold)
-
-    return recall[desired_threshold_idx]
-
-
-def get_count(estimator, X, y, lower, upper):
-    X_copy = X.copy()
-    X_copy["pred_proba"] = estimator.predict_proba(X)[:, 0]
-    idx = (X_copy["pred_proba"] >= lower) & (X_copy["pred_proba"] <= upper)
-    count = np.sum(idx)
-
-    return count
-
-
-def get_mean_returns(estimator, X, y, returns, lower, upper):
-    X_copy = X.copy()
-    X_copy["pred_proba"] = estimator.predict_proba(X)[:, 0]
-    returns = returns.loc[X_copy.index]
-    idx = (X_copy["pred_proba"] >= lower) & (X_copy["pred_proba"] <= upper)
-    return returns.loc[idx].mean()
-
-
-def get_prod_returns(estimator, X, y, returns, lower, upper):
-    X_copy = X.copy()
-    X_copy["pred_proba"] = estimator.predict_proba(X)[:, 0]
-    returns = returns.loc[X_copy.index]
-    idx = (X_copy["pred_proba"] >= lower) & (X_copy["pred_proba"] <= upper)
-    return returns.loc[idx].product()
-
-
-def get_threshold_max_cumprod_returns(estimator, X, y, returns):
-    pos_label = np.sort(y.unique())[0]
-    is_long = "_long" in pos_label
-
-    X_copy = X.copy()
-    X_copy["pred_proba"] = estimator.predict_proba(X)[:, 0]
-    returns = returns.loc[X_copy.index]
-    X_copy = X_copy.sort_values(by="pred_proba", ascending=False)
-    X_copy["cumprod_returns"] = returns.cumprod()
-    if is_long:
-        max_cumprod_returns_idx = X_copy["cumprod_returns"].argmax()
+        return -999
     else:
-        max_cumprod_returns_idx = X_copy["cumprod_returns"].argmin()
-
-    return X_copy.iloc[max_cumprod_returns_idx]["pred_proba"]
+        return -999
 
 
-def get_value_max_cumprod_returns(estimator, X, y, returns):
-    pos_label = np.sort(y.unique())[0]
-    is_long = "_long" in pos_label
+def log_raw_predictions_description(estimator, X, y, returns_df, target):
+    if target in estimator.classes_:
 
-    X_copy = X.copy()
-    X_copy["pred_proba"] = estimator.predict_proba(X)[:, 0]
-    returns = returns.loc[X_copy.index]
-    X_copy = X_copy.sort_values(by="pred_proba", ascending=False)
-    X_copy["cumprod_returns"] = returns.cumprod()
-    if is_long:
-        max_cumprod_returns_idx = X_copy["cumprod_returns"].argmax()
+        # Get df with proba and returns
+        pred_df = get_predictions_with_returns(estimator, X, returns_df, target)
+        df = pd.concat([pred_df, y], axis=1)
+
+        print(f"Target: {target}")
+        print(df.head(500))
+
+        return -999
     else:
-        max_cumprod_returns_idx = X_copy["cumprod_returns"].argmin()
-
-    return X_copy.iloc[max_cumprod_returns_idx]["cumprod_returns"]
+        return -999
 
 
-def get_precision_max_cumprod_returns(estimator, X, y, returns):
-    threshold = get_threshold_max_cumprod_returns(estimator, X, y, returns)
-    precision = get_precision_at_threshold(estimator, X, y, threshold)
+def get_threshold_max_cumprod_returns(estimator, X, y, returns_df, target):
+    if target in estimator.classes_:
 
-    return precision
+        # Get df with proba and returns
+        df = get_predictions_with_returns(estimator, X, returns_df, target)
 
+        # Print threshold and max value
+        max_cumprod_returns_idx = df["cumprod_returns"].argmax()
+        max_cumprod_returns_threshold = df.iloc[max_cumprod_returns_idx]["pred_proba"]
 
-def get_recall_max_cumprod_returns(estimator, X, y, returns):
-    threshold = get_threshold_max_cumprod_returns(estimator, X, y, returns)
-    recall = get_recall_at_threshold(estimator, X, y, threshold)
-
-    return recall
-
-
-def get_describe_returns(estimator, X, y, returns, title):
-    pos_label = np.sort(y.unique())[0]
-    X_copy = X.copy()
-    X_copy["pred_proba"] = estimator.predict_proba(X)[:, 0]
-    returns = returns.loc[X_copy.index]
-    bins = np.linspace(start=0, stop=1, num=11)
-    stats = returns.groupby(pd.cut(X_copy["pred_proba"], bins=bins)).agg("describe")
-    print(f"Trade Returns by Threshold: {title} ({pos_label})")
-    print(stats)
-    return 0
+        return max_cumprod_returns_threshold
+    else:
+        return -999
 
 
-def get_describe_precision_recall(estimator, X, y, title):
-    pos_label = np.sort(y.unique())[0]
-    precision, recall, thresholds = precision_recall_curve(
-        y, estimator.predict_proba(X)[:, 0], pos_label=pos_label)
+def get_threshold_max_cumprod_returns_monte_carlo(
+        estimator, X, y, returns_df, target, num_mc_iterations, mc_frac):
 
-    pr_summary = np.column_stack([precision, recall, np.append(thresholds, [1])])
-    pr_summary_df = pd.DataFrame(pr_summary, columns=["precision", "recall", "thresholds"])
-    bins = np.linspace(start=0, stop=1, num=11)
+    if target in estimator.classes_:
+        mc_results = []
 
-    pr_agg_df = pr_summary_df[["precision", "recall"]].groupby(
-        pd.cut(pr_summary_df["thresholds"], bins=bins)).agg(["mean", "median", "std"])
-    print(f"Precision Recall by Threshold: {title} ({pos_label})")
-    print(pr_agg_df)
+        for _ in np.arange(num_mc_iterations):
 
-    return 0
+            # Get df with proba and returns
+            df = get_predictions_with_returns(estimator, X, returns_df, target)
+            df = df.sample(
+                frac=mc_frac, replace=True
+            ).sort_values(
+                by="pred_proba", ascending=False)
+
+            # Print threshold and max value
+            max_cumprod_returns_idx = df["cumprod_returns"].argmax()
+            max_cumprod_returns_threshold = df.iloc[max_cumprod_returns_idx]["pred_proba"]
+
+            mc_results.append(max_cumprod_returns_threshold)
+
+        return np.median(mc_results)
+
+    else:
+        return -999
 
 
-def get_describe_cumprod_returns(estimator, X, y, returns, title):
-    pos_label = np.sort(y.unique())[0]
-    X_copy = X.copy()
-    X_copy["pred_proba"] = estimator.predict_proba(X)[:, 0]
-    X_copy = X_copy.sort_values(by="pred_proba", ascending=False)
+def get_value_max_cumprod_returns(estimator, X, y, returns_df, target):
+    if target in estimator.classes_:
 
-    returns = returns.loc[X_copy.index]
-    X_copy["cumprod_returns"] = returns.cumprod()
+        # Get df with proba and returns
+        df = get_predictions_with_returns(estimator, X, returns_df, target)
 
-    bins = np.linspace(start=0, stop=1, num=11)
-    stats = X_copy["cumprod_returns"].groupby(
-        pd.cut(X_copy["pred_proba"], bins=bins)).agg("describe")
-    print(f"Cumulative Product Returns by Threshold: {title} ({pos_label})")
-    print(stats)
-    return 0
+        # Print threshold and max value
+        max_cumprod_returns_idx = df["cumprod_returns"].argmax()
+        max_cumprod_returns_value = df.iloc[max_cumprod_returns_idx]["cumprod_returns"]
+
+        return max_cumprod_returns_value
+    else:
+        return -999
+
+
+def get_value_max_cumprod_returns_monte_carlo(
+        estimator, X, y, returns_df, target, num_mc_iterations, mc_frac):
+
+    if target in estimator.classes_:
+        mc_results = []
+
+        for _ in np.arange(num_mc_iterations):
+
+            # Get df with proba and returns
+            df = get_predictions_with_returns(estimator, X, returns_df, target)
+            df = df.sample(
+                frac=mc_frac, replace=True
+            ).sort_values(
+                by="pred_proba", ascending=False)
+
+            # Print threshold and max value
+            max_cumprod_returns_idx = df["cumprod_returns"].argmax()
+            max_cumprod_returns_value = df.iloc[max_cumprod_returns_idx]["cumprod_returns"]
+
+            mc_results.append(max_cumprod_returns_value)
+
+        return np.mean(mc_results)
+    else:
+        return -999
+
+
+def get_value_pct_y_true(estimator, X, y, target):
+    if target in estimator.classes_:
+
+        num_y_true = np.where(y == target, 1, 0).sum()
+        denom = y.count()
+        pct_y_true = np.divide(num_y_true, denom)
+
+        return pct_y_true
+    else:
+        return -999

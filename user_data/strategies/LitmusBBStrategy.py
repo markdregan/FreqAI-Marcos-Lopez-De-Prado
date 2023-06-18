@@ -27,42 +27,48 @@ class LitmusBBStrategy(LitmusSimpleStrategy):
                 "DI_values": {"color": "grey"}
             },
             "Meta": {
-                "a_win_long": {"color": "PaleGreen"},
-                "a_win_short": {"color": "Salmon"},
-                "meta_enter_long_threshold": {"color": "ForestGreen"},
-                "meta_enter_short_threshold": {"color": "FireBrick"},
+                "win_long": {"color": "ForestGreen"},
+                "win_short": {"color": "FireBrick"},
+                "win_long_enter_threshold": {"color": "Green"},
+                "win_short_enter_threshold": {"color": "Red"},
             },
-            "BB": {
+            "RSI": {
                 "rsi": {"color": "Purple"},
+            },
+            "Ent": {
+                "primary_enter_long": {"color": "PaleGreen"},
+                "primary_enter_short": {"color": "FireBrick"},
             },
             "GT": {
                 "primary_enter_long_tbm": {"color": "PaleGreen"},
-                "primary_enter_short_tbm": {"color": "Salmon"},
-            },
-            "EE": {
-                "primary_enter_long": {"color": "PaleGreen"},
-                "primary_enter_short": {"color": "Salmon"},
+                "primary_enter_short_tbm": {"color": "FireBrick"},
             },
             "Returns": {
-                "value_meta_long_max_returns_&-meta_target": {"color": "PaleGreen"},
-                "value_meta_short_max_returns_&-meta_target": {"color": "Salmon"}
+                "win_long_value_&-meta_target_binary_long": {"color": "PaleGreen"},
+                "win_short_value_&-meta_target_binary_short": {"color": "FireBrick"},
             },
-            "Time": {
-                "total_time_&-meta_target": {"color": "SkyBlue"},
+            "F1": {
+                "value_meta_f1_score_&-meta_target_binary_long": {"color": "PaleGreen"},
+                "value_meta_f1_score_&-meta_target_binary_short": {"color": "FireBrick"},
             },
             "Feat": {
-                "num_features_selected_&-meta_target": {"color": "SkyBlue"}
+                "num_features_selected_&-meta_target_binary_long": {"color": "PaleGreen"},
+                "num_features_selected_&-meta_target_binary_short": {"color": "FireBrick"}
+            },
+            "RMax": {
+                "!-trade_return_median_max_price_change": {"color": "PaleGreen"},
+                "!-trade_return_median_min_price_change": {"color": "FireBrick"}
             }
         },
     }
 
     # ROI table:
     minimal_roi = {
-        "0": 1.0,
+        "0": 1,
         "1000": 0
     }
 
-    # Stoploss:
+    # Stoploss (initial before custom_stoploss kicks in)
     stoploss = -0.05
 
     # Stop loss config
@@ -73,14 +79,14 @@ class LitmusBBStrategy(LitmusSimpleStrategy):
     trailing_only_offset_is_reached = False
 
     # DCA Config
-    position_adjustment_enable = False
-    max_entry_position_adjustment = 3
+    position_adjustment_enable = True
+    max_entry_position_adjustment = 2
 
     # Other strategy flags
     process_only_new_candles = True
     use_exit_signal = True
     can_short = True
-    startup_candle_count = 120
+    startup_candle_count = 300
 
     def feature_engineering_standard(self, dataframe, **kwargs) -> pd.DataFrame:
         """
@@ -114,22 +120,32 @@ class LitmusBBStrategy(LitmusSimpleStrategy):
 
         dataframe['rsi'] = ta.RSI(dataframe, timeperiod=14)
 
+        # Primary Entry Logic (shift entry forward +1 step)
         dataframe["primary_enter_long"] = (
             (dataframe["low"] < dataframe["mm_bb_lowerband"]) &
-            (qtpylib.crossed_above(dataframe['rsi'], dataframe['rsi'].shift(1)))
+            (qtpylib.crossed_above(dataframe["rsi"], dataframe["rsi"].shift(1)))
         )
+        dataframe["primary_enter_long"] = dataframe["primary_enter_long"].shift(1).fillna(
+            value=False)
+
         dataframe["primary_enter_short"] = (
             (dataframe["high"] > dataframe["mm_bb_upperband"]) &
-            (qtpylib.crossed_below(dataframe['rsi'], dataframe['rsi'].shift(1)))
+            (qtpylib.crossed_below(dataframe["rsi"], dataframe["rsi"].shift(1)))
         )
+        dataframe["primary_enter_short"] = dataframe["primary_enter_short"].shift(1).fillna(
+            value=False)
 
-        dataframe["primary_exit_long"] = qtpylib.crossed_above(
-            dataframe["close"], dataframe["mm_bb_upperband"])
-        dataframe["primary_exit_short"] = qtpylib.crossed_below(
-            dataframe["close"], dataframe["mm_bb_lowerband"])
+        # Primary Exit Logic
+        dataframe["primary_exit_long"] = (
+                (dataframe["high"] > dataframe["mm_bb_upperband"]) &
+                (qtpylib.crossed_below(dataframe['rsi'], dataframe['rsi'].shift(1)))
+        )
+        dataframe["primary_exit_short"] = (
+                (dataframe["low"] < dataframe["mm_bb_lowerband"]) &
+                (qtpylib.crossed_above(dataframe["rsi"], dataframe["rsi"].shift(1)))
+        )
 
         # Generate remaining features from super class
         dataframe = super().feature_engineering_standard(dataframe, **kwargs)
 
         return dataframe
-

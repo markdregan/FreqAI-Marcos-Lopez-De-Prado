@@ -10,6 +10,8 @@ optuna
 BorutaShap
 fracdiff
 tscv
+probatus
+cointanalysis
 
 # Nice to have for analysis
 pandas_datareader

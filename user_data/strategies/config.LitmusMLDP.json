@@ -1,13 +1,13 @@
 {
     "trading_mode": "futures",
     "margin_mode": "isolated",
-    "max_open_trades": 5,
+    "max_open_trades": 8,
     "stake_currency": "USDT",
     "stake_amount": "unlimited",
     "tradable_balance_ratio": 1,
     "fiat_display_currency": "USD",
     "dry_run": true,
-    "timeframe": "15m",
+    "timeframe": "5m",
     "dry_run_wallet": 10000,
     "process_only_new_candles": true,
     "cancel_open_orders_on_exit": true,
@@ -24,9 +24,10 @@
             "rateLimit": 200
         },
         "pair_whitelist": [
+            "SOL/USDT:USDT",
             "ETH/USDT:USDT",
-            "XMR/USDT:USDT",
-            "SOL/USDT:USDT"
+            "LINK/USDT:USDT",
+            "DOT/USDT:USDT"
         ],
         "pair_blacklist": []
     },
@@ -63,23 +64,23 @@
     "freqai": {
         "enabled": true,
         "purge_old_models": true,
-        "train_period_days": 400,
-        "backtest_period_days": 1,
+        "train_period_days": 500,
+        "backtest_period_days": 10,
         "fit_live_predictions_candles": 0,
-        "identifier": "Litmus",
+        "identifier": "LitmusBBTrendStrategy",
         "fixed_leverage": 3,
         "feature_parameters": {
             "include_timeframes": [
+                "5m",
                 "15m",
-                "1h",
-                "4h"
+                "1h"
             ],
             "include_corr_pairlist": [
                 "BTC/USDT:USDT"
             ],
             "label_period_candles": 0,
-            "include_shifted_candles": 3,
-            "DI_threshold": 10,
+            "include_shifted_candles": 2,
+            "DI_threshold": 1000,
             "weight_factor": 0.7,
             "principal_component_analysis": false,
             "plot_feature_importances": 0,
@@ -91,8 +92,8 @@
             "use_DBSCAN_to_remove_outliers": false,
             "inlier_metric_window": 0,
             "stratify_training_data": 0,
-            "indicator_periods_candles": [8, 24, 64, 128],
-            "noise_standard_deviation": 0.001,
+            "indicator_periods_candles": [10, 50, 120],
+            "noise_standard_deviation": 0.000,
             "reverse_train_test_order": false,
             "fracdiff": {
                 "enabled": false,
@@ -103,27 +104,33 @@
                 "row_stride": 10
             }
         },
+        "feature_engineering": {
+            "cointegration": {
+                "enabled": false
+            }
+        },
         "feature_selection": {
             "cv": {
-                "cv_n_splits": 3,
-                "cv_gap_before": 2,
-                "cv_gap_after": 2
-            },
-            "drop_weak_features": {
-                "enabled": true,
-                "pct_additional_features": 0.1
+                "cv_n_splits": 5,
+                "cv_gap_before": 3,
+                "cv_gap_after": 3
             },
             "greedy_selection": {
                 "enabled": false,
-                "threshold": 0.98
+                "threshold": 0.97
             },
             "drop_rows_meta_model": {
                 "enabled": true
             },
-            "select_by_shuffle": {
+            "shap_rfecv": {
                 "enabled": true,
-                "scoring": "neg_log_loss",
-                "min_threshold": 0.00
+                "rerun_period_hours": 0.25,
+                "step": 0.25,
+                "min_features_to_select": 10,
+                "is_win_threshold": 3,
+                "verbose": 51,
+                "early_stopping_rounds": 50,
+                "fbeta_coeff": 0.2
             }
         },
         "data_split_parameters": {
@@ -132,67 +139,69 @@
         },
         "entry_parameters": {
             "smoothing_window": 20,
-            "trade_cost_pct": 0.001,
-            "slippage_cost_pct": 0.000
+            "trade_cost_pct": 0.0000,
+            "slippage_cost_pct": 0.0000
+        },
+        "bet_sizing": {
+            "enabled": false,
+            "expected_win_loss_window": 1000,
+            "kelly_max_clip": 0.2
         },
         "exit_parameters": {
-            "exit_trigger_enabled": true,
-            "sl_exit_trigger_enabled": false,
-            "sl_exit_trigger_pct": 0.01
-        },
-        "primary_target_parameters": {
-            "zigzag_min_growth": 0.006,
-            "nearby_threshold": 0.002,
-            "forward_pass": true,
-            "reverse_pass": false,
-            "target_offset": 1
+            "weak_opposing_entry_trigger_enabled": false,
+            "strong_opposing_entry_trigger_enabled": true,
+            "exit_trigger_enabled": true
         },
         "secondary_target_parameters": {
-            "tmb_long_upper": 0.004,
+            "tmb_long_upper": 0.008,
             "tmb_long_lower": 0.004,
-            "tmb_long_window": 100,
+            "tmb_long_window": 60,
             "tmb_short_upper": 0.004,
-            "tmb_short_lower": 0.004,
-            "tmb_short_window": 100,
-            "primary_perf_window": 40
+            "tmb_short_lower": 0.008,
+            "tmb_short_window": 60,
+            "dynamic_tbm_returns_window": 1000,
+            "dynamic_tmb_returns_std_coeff": 1
         },
         "model_training_parameters": {
             "verbose": 200,
-            "loss_function": "MultiClassOneVsAll",
+            "loss_function": "Logloss",
             "bootstrap_type": "Bayesian",
             "grow_policy": "Lossguide",
             "od_type": "IncToDec",
             "depth": 5,
-            "iterations": 1000,
+            "iterations": 1200,
             "learning_rate": 0.002
         },
         "optuna": {
-            "enabled": true,
+            "enabled": false,
             "pct_triggered": 0.1,
             "num_trials_to_keep": 200
         },
         "extra_returns_per_train": {
-            "total_time_&-meta_target": 0,
-            "num_features_selected_&-meta_target": 0,
-            "threshold_meta_long_max_returns_&-meta_target": 0,
-            "threshold_meta_short_max_returns_&-meta_target": 0,
-            "value_meta_long_max_returns_&-meta_target": 0,
-            "value_meta_short_max_returns_&-meta_target": 0,
-            "value_meta_f1_score_&-meta_target": 0,
+            "total_time_&-meta_target_binary_long": 0,
+            "num_features_selected_&-meta_target_binary_long": 0,
 
-            "total_time_&-primary_target": 0,
-            "num_features_selected_&-primary_target": 0,
-            "threshold_meta_long_max_returns_&-primary_target": 0,
-            "threshold_meta_short_max_returns_&-primary_target": 0,
-            "value_meta_long_max_returns_&-primary_target": 0,
-            "value_meta_short_max_returns_&-primary_target": 0,
-            "value_meta_f1_score_&-primary_target": 0
+            "win_long_threshold_&-meta_target_binary_long": 0,
+            "win_long_value_&-meta_target_binary_long": 0,
+
+            "total_time_&-meta_target_binary_short": 0,
+            "num_features_selected_&-meta_target_binary_short": 0,
+
+            "win_short_threshold_&-meta_target_binary_short": 0,
+            "win_short_value_&-meta_target_binary_short": 0,
+
+            "value_meta_f1_score_&-meta_target_binary_long": 0,
+            "value_meta_f1_score_&-meta_target_binary_short": 0,
+
+            "value_f1_beta_score_&-meta_target_binary_long": 0,
+            "value_f1_beta_score_&-meta_target_binary_short": 0
         }
     },
     "telegram": {
         "enabled": true,
         "token": "5012333300:AAFiwgqakXFwAsDBLqgXDLTnWqQCMBsYbK4",
-        "chat_id": "1963068189"
+        "chat_id": "1963068189",
+        "allow_custom_messages": true
     },
     "api_server": {
         "enabled": true,
